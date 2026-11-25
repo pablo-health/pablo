@@ -209,6 +209,7 @@ from ..services.telehealth import (
 from ..services.video_default import default_to_meet_on_calendar_connect
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .users import require_practice_admin
 
 #: Where an authorization code may be delivered. Shared with every other
 #: OAuth connect flow — see ``app.auth.oauth_redirect``.
@@ -2318,20 +2319,19 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
 def get_scheduling_policy(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> SchedulingPolicyResponse:
-    """The practice's scheduling policy.
+    """The practice's scheduling policy, or the off-or-strict defaults if none is stored.
 
-    A practice that has never opened the settings has no stored row; it gets
-    the defaults, which are uniformly off or strict. Reading never creates a
-    row, so this stays safe to call from anywhere.
+    Reading never creates a row, so this stays safe to call from anywhere.
     """
-    # Taken from the request-scoped session rather than injected: the tenant
-    # context dependency above has already pointed the search path at this
-    # practice, and every other read in this module resolves its session the
-    # same way.
+    # The tenant context dependency already set this session's search path.
     return SchedulingPolicyResponse(**load_policy(get_db_session()))
 
 
-@router.patch("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
+@router.patch(
+    "/api/scheduling/policy",
+    response_model=SchedulingPolicyResponse,
+    dependencies=[Depends(require_practice_admin)],
+)
 def update_scheduling_policy(
     request: UpdateSchedulingPolicyRequest,
     _ctx: TenantContext = Depends(get_tenant_context),

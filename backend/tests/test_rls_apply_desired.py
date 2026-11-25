@@ -11,23 +11,14 @@ cases the real file does not happen to contain today.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 from app.db.provisioning import TEMPLATE_ROW_SECURITY_MARKER
 from app.db.rls_apply import (
-    APPLIED_PREFIX,
     DesiredTable,
-    applied_fingerprint,
-    apply_tenant_rls,
     desired_from_sql,
-    render_policy,
-    tenant_rls_differences,
 )
-from app.db.rls_state import FINGERPRINT_PREFIX, LivePolicy
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from app.db.rls_state import FINGERPRINT_PREFIX
 
 _TEMPLATE = Path(__file__).resolve().parents[1] / "app" / "db" / "tenant_template.sql"
 
@@ -199,66 +190,9 @@ def test_a_policy_that_never_ends_is_refused() -> None:
         desired_from_sql(_TABLES + "\nCREATE POLICY p ON __TENANT_SCHEMA__.notes USING (true)\n")
 
 
-@pytest.mark.parametrize(
-    ("policy", "expected"),
-    [
-        (
-            LivePolicy("*", True, "public", "(practice_x.f(id))", "(practice_x.f(id))", None),
-            "CREATE POLICY p ON __TENANT_SCHEMA__.t "
-            "USING ((__TENANT_SCHEMA__.f(id))) WITH CHECK ((__TENANT_SCHEMA__.f(id)));",
-        ),
-        (
-            LivePolicy("r", True, "public", "true", None, None),
-            "CREATE POLICY p ON __TENANT_SCHEMA__.t FOR SELECT USING (true);",
-        ),
-        (
-            LivePolicy("a", True, "public", None, "false", None),
-            "CREATE POLICY p ON __TENANT_SCHEMA__.t FOR INSERT WITH CHECK (false);",
-        ),
-        (
-            LivePolicy("d", False, "app,reader", "true", None, None),
-            "CREATE POLICY p ON __TENANT_SCHEMA__.t AS RESTRICTIVE FOR DELETE "
-            "TO app, reader USING (true);",
-        ),
-    ],
-)
-def test_a_live_policy_renders_as_pg_dump_writes_it(policy: LivePolicy, expected: str) -> None:
-    assert render_policy("practice_x", "t", "p", policy) == expected
-
-
-def test_the_applied_fingerprint_changes_with_either_half() -> None:
-    """It ties one statement to one stored form, so neither can change under it."""
-    base = applied_fingerprint("CREATE POLICY p ON t USING (a);", "CREATE POLICY p ON t USING (b);")
-    assert base.startswith(APPLIED_PREFIX)
-    assert base == applied_fingerprint(
-        "CREATE POLICY p ON t USING (a);", "CREATE POLICY p ON t USING (b);"
-    )
-    assert base != applied_fingerprint(
-        "CREATE POLICY p ON t USING (a);", "CREATE POLICY p ON t USING (true);"
-    )
-    assert base != applied_fingerprint(
-        "CREATE POLICY p ON t USING (c);", "CREATE POLICY p ON t USING (b);"
-    )
-
-
 def test_a_quoted_table_name_is_refused() -> None:
     """Names are compared as plain text all the way through, so a quoted one cannot be read."""
     with pytest.raises(ValueError, match="qualified"):
         desired_from_sql(
             _TABLES + '\nALTER TABLE __TENANT_SCHEMA__."Notes" ENABLE ROW LEVEL SECURITY;\n'
         )
-
-
-@pytest.mark.parametrize("entry_point", [apply_tenant_rls, tenant_rls_differences])
-def test_a_schema_name_that_is_not_a_plain_identifier_is_refused_before_any_query(
-    entry_point: Callable[..., object],
-) -> None:
-    """The name goes into DDL as text. Nothing is asked of the session first."""
-
-    class NoSession:
-        def __getattr__(self, name: str) -> object:
-            msg = f"the session was used ({name}) before the schema name was checked"
-            raise AssertionError(msg)
-
-    with pytest.raises(ValueError, match="Invalid schema name"):
-        entry_point(NoSession(), 'practice"; DROP SCHEMA practice CASCADE; --', {})

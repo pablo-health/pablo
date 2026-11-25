@@ -11,7 +11,9 @@ Proves what only the SQL can: a patient the clinician has no grant on is
 absent from both views and the count; a deleted patient's threads are left
 out; the grouped view orders unread first then newest; and the ungrouped
 view lists each client message on its own row, newest first, with the
-practice's replies left out.
+practice's replies left out; and one clinician reading a shared client's
+thread leaves it unread for the other; and reading again after a new message
+moves that clinician's marker forward, never back.
 
 The route wiring and audit rows are covered in
 ``tests/test_patient_message_inbox_api.py``.
@@ -50,6 +52,12 @@ pytestmark = pytest.mark.skipif(
 
 _CLINICIAN = "5b1c9e24-7a30-4f8d-9e61-2c4b8d0a7f13"
 _OTHER_CLINICIAN = "8e2d4a61-3c9f-4b07-a5d2-6f1e0b9c3a48"
+# A pair sharing one client, kept apart from the two above so their counts
+# do not move.
+_SHARING_A = "1f6a2c84-9d3e-4b51-8a07-c4e2b9d61f35"
+_SHARING_B = "6c3e8b17-2a94-4f0d-b5e6-91d7a4c2e083"
+# Reads one client's thread twice, kept apart from everyone above.
+_REREADER = "a47d2e19-5b83-4c6f-9e0a-3d8b1f72c5e4"
 _T0 = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
 
 
@@ -171,6 +179,19 @@ def _thread(practice: _Practice, patient_id: str, *, at: datetime) -> str:
     return thread_id
 
 
+def _mark_read(practice: _Practice, user: str, thread_id: str, *, at: datetime) -> None:
+    """*user* opens the thread, through the repository's own write."""
+    conn = practice.connect(user=user)
+    session = Session(bind=conn)
+    try:
+        PostgresPatientMessageRepository(session).mark_thread_read_by_clinician(thread_id, user, at)
+        session.commit()
+        conn.commit()  # the session joined the connection's transaction; this ends it
+    finally:
+        session.close()
+        conn.close()
+
+
 @pytest.fixture(scope="module")
 def seeded(practice: _Practice) -> dict[str, str]:
     """Ada and Grace are the clinician's; Linus is somebody else's; Hedy is
@@ -194,12 +215,7 @@ def seeded(practice: _Practice) -> dict[str, str]:
     _thread(practice, hedy, at=_T0 + timedelta(minutes=30))
 
     # Grace's thread has been read; Ada's has not. Hedy's chart is deleted.
-    practice.run(
-        "UPDATE patient_message_threads SET clinician_last_read_at = :at "
-        "WHERE id = CAST(:t AS uuid)",
-        {"t": grace_thread, "at": _T0 + timedelta(hours=1)},
-        user=_CLINICIAN,
-    )
+    _mark_read(practice, _CLINICIAN, grace_thread, at=_T0 + timedelta(hours=1))
     practice.run(
         "UPDATE patients SET deleted_at = now() WHERE id = CAST(:p AS uuid)",
         {"p": hedy},
@@ -274,3 +290,46 @@ def test_another_clinicians_patient_is_theirs_alone(practice: _Practice) -> None
             "Linus Other"
         ]
         assert repo.count_unread_threads(_OTHER_CLINICIAN) == 1
+
+
+def test_reading_a_shared_clients_thread_is_one_clinicians_read(practice: _Practice) -> None:
+    mary = _patient(practice, "Mary", "Somerville", clinician=_SHARING_A)
+    practice.run(
+        "INSERT INTO patient_clinicians (patient_id, user_id, role, granted_by) "
+        "VALUES (CAST(:pid AS uuid), :u, 'co_treating', :u)",
+        {"pid": mary, "u": _SHARING_B},
+        user=_SHARING_B,
+    )
+    thread = _thread(practice, mary, at=_T0)
+
+    _mark_read(practice, _SHARING_A, thread, at=_T0 + timedelta(minutes=1))
+
+    with _inbox_as(practice, _SHARING_A) as repo:
+        assert [row.unread_count for row in repo.list_inbox_threads(_SHARING_A)] == [0]
+        assert repo.count_unread_threads(_SHARING_A) == 0
+        assert repo.list_inbox_messages(_SHARING_A, unread_only=True) == []
+    with _inbox_as(practice, _SHARING_B) as repo:
+        assert [row.unread_count for row in repo.list_inbox_threads(_SHARING_B)] == [1]
+        assert repo.count_unread_threads(_SHARING_B) == 1
+        assert [row.unread for row in repo.list_inbox_messages(_SHARING_B)] == [True]
+        assert [n for _, n in repo.list_threads_for_patient(mary, _SHARING_B)] == [1]
+
+
+def test_reading_again_after_a_new_message_moves_the_marker_forward(
+    practice: _Practice,
+) -> None:
+    ida = _patient(practice, "Ida", "Noddack", clinician=_REREADER)
+    thread = _thread(practice, ida, at=_T0)
+    _mark_read(practice, _REREADER, thread, at=_T0 + timedelta(minutes=1))
+    _message(practice, (ida, thread), at=_T0 + timedelta(minutes=5), body="ida again")
+
+    with _inbox_as(practice, _REREADER) as repo:
+        assert repo.count_unread_threads(_REREADER) == 1
+
+    _mark_read(practice, _REREADER, thread, at=_T0 + timedelta(minutes=6))
+    # A stale tab's mark-read, committed last, does not move the marker back.
+    _mark_read(practice, _REREADER, thread, at=_T0 + timedelta(minutes=2))
+
+    with _inbox_as(practice, _REREADER) as repo:
+        assert repo.count_unread_threads(_REREADER) == 0
+        assert [row.unread_count for row in repo.list_inbox_threads(_REREADER)] == [0]

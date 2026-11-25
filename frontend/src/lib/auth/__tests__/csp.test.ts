@@ -5,6 +5,7 @@ import {
   assertHttpsOrigin,
   browserApiOrigin,
   browserStorageOrigin,
+  extraSources,
   generateNonce,
 } from "@/lib/auth/csp"
 
@@ -91,6 +92,48 @@ describe("browserStorageOrigin", () => {
   it("still refuses a plaintext non-loopback store", () => {
     vi.stubEnv("PUBLIC_FILE_STORAGE_URL", "http://storage.example.com")
     expect(() => browserStorageOrigin()).toThrow(/must be an https origin/)
+  })
+})
+
+describe("extraSources", () => {
+  it("is empty when the variable is unset", () => {
+    vi.stubEnv("CSP_EXTRA_SCRIPT_SRC", "")
+    expect(extraSources("CSP_EXTRA_SCRIPT_SRC")).toBe("")
+  })
+
+  it("passes origins and origin-plus-path URLs through, whitespace normalised", () => {
+    vi.stubEnv(
+      "CSP_EXTRA_SCRIPT_SRC",
+      "  https://cdn.example.com/lib/v2/init.js\n\thttps://api.example.com   http://localhost:9000 "
+    )
+    expect(extraSources("CSP_EXTRA_SCRIPT_SRC")).toBe(
+      "https://cdn.example.com/lib/v2/init.js https://api.example.com http://localhost:9000"
+    )
+  })
+
+  it.each([
+    "'unsafe-inline'",
+    "'unsafe-eval'",
+    "'self'",
+    "'nonce-abc'",
+    "*",
+    "https:",
+    "data:",
+    "https://*.example.com",
+    "http://example.com",
+    "https://example.com;",
+    "https://a.example.com,https://b.example.com",
+    "https://example.com/?q=1",
+    "https://user@example.com",
+    "example.com",
+  ])("refuses %s, naming the variable", (value) => {
+    vi.stubEnv("CSP_EXTRA_FRAME_SRC", `https://ok.example.com ${value}`)
+    expect(() => extraSources("CSP_EXTRA_FRAME_SRC")).toThrow(/CSP_EXTRA_FRAME_SRC/)
+  })
+
+  it("refuses a value that smuggles in another directive", () => {
+    vi.stubEnv("CSP_EXTRA_CONNECT_SRC", "https://ok.example.com; script-src *")
+    expect(() => extraSources("CSP_EXTRA_CONNECT_SRC")).toThrow(/CSP_EXTRA_CONNECT_SRC/)
   })
 })
 

@@ -418,12 +418,13 @@ def _audit(engine: Engine, schema: str) -> list[dict[str, Any]]:
 
 
 # The rows a thread route could write. Each is read whole, as text, so a
-# changed status, assignee, read mark, closed_by or last_message_at shows,
-# and so does a new message, attachment link or inbox state.
+# changed status, assignee, closed_by or last_message_at shows, and so does
+# a new message, attachment link, read mark or inbox state.
 _FOOTPRINT_TABLES = (
     "patient_message_threads",
     "patient_messages",
     "patient_message_attachments",
+    "patient_message_thread_reads",
     "inbox_item_states",
 )
 

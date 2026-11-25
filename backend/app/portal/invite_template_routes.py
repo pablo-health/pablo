@@ -2,9 +2,11 @@
 
 """A practice's invitation wording, and what one client's invitation will say.
 
-* ``GET``/``PUT``/``DELETE /api/portal/invite-template`` — CLINICIAN. The
-  practice's own wording: read it (or the default), save it, or go back to
-  the default.
+* ``GET /api/portal/invite-template`` — CLINICIAN. The practice's own
+  wording, or the default.
+* ``PUT``/``DELETE /api/portal/invite-template`` — the practice owner or a
+  practice admin (``require_practice_admin``): save it, or go back to the
+  default.
 * ``POST /api/portal/invite-template/preview`` — CLINICIAN. A draft rendered
   for an example client, for the editor's live preview.
 * ``POST /api/patients/{id}/portal-invite/preview`` — CLINICIAN. This client's
@@ -36,6 +38,7 @@ from ..models.audit import AuditAction, ResourceType
 from ..repositories import get_patient_repository
 from ..repositories.patient import PatientRepository  # noqa: TC001
 from ..routes._deps import practice_id_or_409
+from ..routes.users import require_practice_admin
 from ..services.audit_service import AuditService, get_audit_service
 from .clinicians import ClinicianName, get_primary_clinician_name
 from .delivery import PortalInviteDelivery, RenderedInviteDelivery
@@ -134,7 +137,12 @@ def get_invite_template(
     return _template_response(store.get(practice_id_or_409(user)), delivery)
 
 
-@router.put("/api/portal/invite-template", response_model=InviteTemplateResponse)
+@router.put(
+    "/api/portal/invite-template",
+    response_model=InviteTemplateResponse,
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
+)
 def save_invite_template(
     body: InviteTemplateRequest,
     user: Annotated[User, Depends(require_active_subscription)],
@@ -159,7 +167,12 @@ def save_invite_template(
     return _template_response(store.get(practice_id), delivery)
 
 
-@router.delete("/api/portal/invite-template", response_model=InviteTemplateResponse)
+@router.delete(
+    "/api/portal/invite-template",
+    response_model=InviteTemplateResponse,
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
+)
 def reset_invite_template(
     user: Annotated[User, Depends(require_active_subscription)],
     store: Annotated[InviteTemplateStore, Depends(get_invite_template_store)],

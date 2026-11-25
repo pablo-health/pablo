@@ -18,13 +18,15 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
+from sqlalchemy import String, Uuid, bindparam, exists, func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ...db import current_practice_schema
 from ...db.models import (
     PatientDocumentRow,
     PatientMessageAttachmentRow,
     PatientMessageRow,
+    PatientMessageThreadReadRow,
     PatientMessageThreadRow,
     PatientRow,
 )
@@ -69,7 +71,16 @@ def _thread(row: PatientMessageThreadRow) -> PatientMessageThread:
         closed_at=row.closed_at,
         closed_by=row.closed_by,
         assigned_user_id=row.assigned_user_id,
-        clinician_last_read_at=row.clinician_last_read_at,
+    )
+
+
+def _unread_by(user_id: str) -> ColumnElement[bool]:
+    """The outer ``PatientMessageRow`` is newer than *user_id*'s last read of its thread."""
+    reads = PatientMessageThreadReadRow
+    return ~exists().where(
+        reads.thread_id == PatientMessageRow.thread_id,
+        reads.user_id == user_id,
+        reads.last_read_at >= PatientMessageRow.created_at,
     )
 
 
@@ -189,9 +200,9 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             .scalars()
             .all()
         )
-        return [(_thread(r), self._clinician_unread_count(r)) for r in rows]
+        return [(_thread(r), self._clinician_unread_count(r, user_id)) for r in rows]
 
-    def _inbox_unread(self) -> ScalarSelect[int]:
+    def _inbox_unread(self, user_id: str) -> ScalarSelect[int]:
         """Per-thread unread count, correlated to the outer thread row.
 
         The same rule as :meth:`_clinician_unread_count`, as one expression
@@ -204,10 +215,7 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             .where(
                 PatientMessageRow.thread_id == thread.id,
                 PatientMessageRow.sender == SENDER_PATIENT,
-                or_(
-                    thread.clinician_last_read_at.is_(None),
-                    PatientMessageRow.created_at > thread.clinician_last_read_at,
-                ),
+                _unread_by(user_id),
             )
             .correlate(thread)
             .scalar_subquery()
@@ -236,7 +244,7 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
         limit: int = 100,
     ) -> list[InboxThread]:
         thread = PatientMessageThreadRow
-        unread = self._inbox_unread().label("unread")
+        unread = self._inbox_unread(user_id).label("unread")
         statement = (
             select(
                 thread,
@@ -269,19 +277,15 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
     def _client_messages(self, user_id: str) -> Select[tuple]:
         """Every message a client sent that this clinician may see, with its thread.
 
-        Carries the patient's name columns and whether the practice has read
-        the message, which every view of single messages shows.
+        Carries the patient's name columns and whether this clinician has
+        read the message, which every view of single messages shows.
         """
         thread = PatientMessageThreadRow
-        unread = or_(
-            thread.clinician_last_read_at.is_(None),
-            PatientMessageRow.created_at > thread.clinician_last_read_at,
-        )
         return (
             select(
                 PatientMessageRow,
                 thread,
-                unread.label("unread"),
+                _unread_by(user_id).label("unread"),
                 PatientRow.first_name,
                 PatientRow.last_name,
                 PatientRow.preferred_name,
@@ -308,13 +312,7 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
     ) -> list[InboxMessage]:
         statement = self._client_messages(user_id)
         if unread_only:
-            thread = PatientMessageThreadRow
-            statement = statement.where(
-                or_(
-                    thread.clinician_last_read_at.is_(None),
-                    PatientMessageRow.created_at > thread.clinician_last_read_at,
-                )
-            )
+            statement = statement.where(_unread_by(user_id))
         return self._read_client_messages(
             statement.order_by(PatientMessageRow.created_at.desc()).limit(limit)
         )
@@ -360,26 +358,26 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
                 # clear. A thread closed with something unread in it would
                 # otherwise hold the badge up with nothing to open.
                 PatientMessageThreadRow.status == THREAD_STATUS_OPEN,
-                self._inbox_unread() > 0,
+                self._inbox_unread(user_id) > 0,
             )
         ).scalar()
         return int(count or 0)
 
-    def _clinician_unread_count(self, row: PatientMessageThreadRow) -> int:
-        """How many patient messages have arrived since the practice looked.
+    def _clinician_unread_count(self, row: PatientMessageThreadRow, user_id: str) -> int:
+        """How many patient messages have arrived since this clinician looked.
 
         A per-thread count rather than one grouped query: the list is one
         patient's threads, which is a handful of rows, and the grouped form
         would still need an outer join to keep threads with nothing unread.
         """
-        conditions = [
-            PatientMessageRow.thread_id == row.id,
-            PatientMessageRow.sender == SENDER_PATIENT,
-        ]
-        if row.clinician_last_read_at is not None:
-            conditions.append(PatientMessageRow.created_at > row.clinician_last_read_at)
         count = self._session.execute(
-            select(func.count()).select_from(PatientMessageRow).where(*conditions)
+            select(func.count())
+            .select_from(PatientMessageRow)
+            .where(
+                PatientMessageRow.thread_id == row.id,
+                PatientMessageRow.sender == SENDER_PATIENT,
+                _unread_by(user_id),
+            )
         ).scalar()
         return int(count or 0)
 
@@ -441,8 +439,16 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
         self, thread_id: str, user_id: str, read_at: datetime
     ) -> PatientMessageThread:
         row = self._writable_thread_row(thread_id, user_id)
-        row.clinician_last_read_at = read_at
-        self._session.flush()
+        reads = PatientMessageThreadReadRow
+        self._session.execute(
+            pg_insert(reads)
+            .values(thread_id=thread_id, user_id=user_id, last_read_at=read_at)
+            .on_conflict_do_update(
+                index_elements=[reads.thread_id, reads.user_id],
+                # Two tabs can commit out of order; the marker only moves forward.
+                set_={"last_read_at": func.greatest(reads.last_read_at, read_at)},
+            )
+        )
         return _thread(row)
 
     # --- patient arm ---

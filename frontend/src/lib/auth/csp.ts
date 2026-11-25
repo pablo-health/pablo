@@ -75,6 +75,40 @@ export function assertHttpsOrigin(name: string, value: string): string {
 }
 
 /**
+ * Extra CSP sources a deployment lists in env var `name`
+ * (`CSP_EXTRA_SCRIPT_SRC`, `CSP_EXTRA_FRAME_SRC`, `CSP_EXTRA_CONNECT_SRC`),
+ * space-separated. Each must be an https URL (an origin, or an origin plus a
+ * path) or a loopback http URL; anything that would widen the policy beyond
+ * named hosts throws at middleware startup. Unset gives "".
+ */
+export function extraSources(name: string): string {
+  const tokens = (process.env[name] || "").split(/\s+/).filter(Boolean)
+  return tokens.map((token) => checkedSource(name, token)).join(" ")
+}
+
+function checkedSource(name: string, token: string): string {
+  const refuse = () =>
+    new Error(
+      `${name} may list only https URLs (or loopback http), with no wildcard, ` +
+        `keyword, query or separator; got "${token}"`
+    )
+  // Quotes are CSP keywords and nonces, * a wildcard, ; and , separators.
+  if (/[;,'*]/.test(token)) throw refuse()
+  let parsed: URL
+  try {
+    parsed = new URL(token)
+  } catch {
+    throw refuse()
+  }
+  const secure =
+    parsed.protocol === "https:" ||
+    (parsed.protocol === "http:" && LOOPBACK_HOSTS.has(parsed.hostname))
+  if (!secure || !parsed.hostname || parsed.username || parsed.password) throw refuse()
+  if (parsed.search || parsed.hash) throw refuse()
+  return token
+}
+
+/**
  * The API origin the BROWSER will dial, for `connect-src`.
  *
  * Normally `API_URL`, and that is the fallback. They differ only where the

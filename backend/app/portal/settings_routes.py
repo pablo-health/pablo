@@ -2,12 +2,13 @@
 
 """Whether a practice offers its clients the portal, and which parts of it.
 
-* ``GET``/``PUT /api/portal/settings`` — CLINICIAN, inside their own practice.
+* ``GET /api/portal/settings`` — CLINICIAN, inside their own practice.
+* ``PUT /api/portal/settings`` — the practice owner or a practice admin
+  (``require_practice_admin``); any other clinician gets 403
+  ``NOT_PRACTICE_ADMIN``, as with the portal welcome and invitation wording.
 
 The practice is resolved from the caller, never taken from the request, so a
-clinician can only ever change their own practice's portal. Any clinician of
-the practice may change it, as with the practice's portal welcome and
-invitation wording.
+clinician can only ever change their own practice's portal.
 
 Turning the portal on mints the practice's portal address if it has none, so
 the first invitation has somewhere to lead. Turning it off takes effect on the
@@ -38,6 +39,7 @@ from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..routes._deps import practice_id_or_409
+from ..routes.users import require_practice_admin
 from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from .modules import known_modules, mounted_modules_on
@@ -144,7 +146,12 @@ def get_portal_settings(
     return _response(store.get(practice_id_or_409(user)), _choosable(request))
 
 
-@router.put("/api/portal/settings", response_model=PortalSettingsResponse)
+@router.put(
+    "/api/portal/settings",
+    response_model=PortalSettingsResponse,
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
+)
 def save_portal_settings(
     body: PortalSettingsRequest,
     request: Request,

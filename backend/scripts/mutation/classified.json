@@ -2759,8 +2759,8 @@
    "file": "app/services/ical_sync_service.py",
    "func": "ICalSyncService.sync",
    "op": "const_str",
-   "desc": "`'Sync failed \u2014 could not fetch or parse feed'` -> `'Sync failed \u2014 could not fetch or parse feedXX'`",
-   "snippet": "'Sync failed \u2014 could not fetch or parse feed'",
+   "desc": "`'Sync failed — could not fetch or parse feed'` -> `'Sync failed — could not fetch or parse feedXX'`",
+   "snippet": "'Sync failed — could not fetch or parse feed'",
    "occurrence": 0
   },
   {
@@ -2777,8 +2777,8 @@
    "file": "app/services/ical_sync_service.py",
    "func": "ICalSyncService.sync",
    "op": "delete_stmt",
-   "desc": "delete body statement `error_msg = 'Sync failed \u2014 could not fetch or parse feed'`",
-   "snippet": "error_msg = 'Sync failed \u2014 could not fetch or parse feed'",
+   "desc": "delete body statement `error_msg = 'Sync failed — could not fetch or parse feed'`",
+   "snippet": "error_msg = 'Sync failed — could not fetch or parse feed'",
    "occurrence": 0
   },
   {
@@ -4205,7 +4205,7 @@
   },
   {
    "class": "B",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_plan.py",
    "func": "<module>",
    "op": "const_str",
    "desc": "`'rls-applied-v1-'` -> `'rls-applied-v1-XX'`",
@@ -4214,7 +4214,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "desired_from_sql",
    "op": "const_str",
    "desc": "`'SQL with no row-level security marker ('` -> `'SQL with no row-level security marker (XX'`",
@@ -4223,7 +4223,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "desired_from_sql",
    "op": "attr_swap",
    "desc": "`.strip` -> `.lstrip`",
@@ -4232,7 +4232,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "desired_from_sql",
    "op": "const_str",
    "desc": "`\"): refusing to read it as 'no row-level security on any of its tables'\"` -> `\"): refusing to read it as 'no row-level security on any of its tables'XX\"`",
@@ -4241,7 +4241,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "desired_from_sql",
    "op": "const_str",
    "desc": "`'row-level security for '` -> `'row-level security for XX'`",
@@ -4250,7 +4250,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "desired_from_sql",
    "op": "const_str",
    "desc": "`', which none of the SQL creates'` -> `', which none of the SQL createsXX'`",
@@ -4259,7 +4259,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "desired_from_sql",
    "op": "const_str",
    "desc": "`': a comment on '` -> `': a comment on XX'`",
@@ -4268,7 +4268,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "desired_from_sql",
    "op": "const_str",
    "desc": "`', with no such policy in the SQL'` -> `', with no such policy in the SQLXX'`",
@@ -4295,7 +4295,7 @@
   },
   {
    "class": "B",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_int",
    "desc": "`0` -> `-1`",
@@ -4304,7 +4304,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_str",
    "desc": "`'a policy with no end: '` -> `'a policy with no end: XX'`",
@@ -4313,7 +4313,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_int",
    "desc": "`120` -> `121`",
@@ -4322,7 +4322,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_int",
    "desc": "`120` -> `119`",
@@ -4331,7 +4331,7 @@
   },
   {
    "class": "B",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_str",
    "desc": "`'COMMENT'` -> `'COMMENTXX'`",
@@ -4340,7 +4340,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_str",
    "desc": "`'unreadable row-level security statement: '` -> `'unreadable row-level security statement: XX'`",
@@ -4349,7 +4349,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_int",
    "desc": "`120` -> `121`",
@@ -4358,7 +4358,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_int",
    "desc": "`120` -> `119`",
@@ -4367,7 +4367,7 @@
   },
   {
    "class": "B",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_is_one_statement",
    "op": "return_none",
    "desc": "`return False` -> `return None`",
@@ -4376,7 +4376,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_is_one_statement",
    "op": "const_str",
    "desc": "`'more than one statement where one policy was expected: '` -> `'more than one statement where one policy was expected: XX'`",
@@ -4385,7 +4385,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_is_one_statement",
    "op": "const_int",
    "desc": "`120` -> `121`",
@@ -4394,7 +4394,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_is_one_statement",
    "op": "const_int",
    "desc": "`120` -> `119`",
@@ -4403,7 +4403,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_table_name",
    "op": "const_str",
    "desc": "`'expected a table qualified with '` -> `'expected a table qualified with XX'`",
@@ -4412,7 +4412,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_table_name",
    "op": "const_str",
    "desc": "`': '` -> `': XX'`",
@@ -4421,7 +4421,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_table_name",
    "op": "const_int",
    "desc": "`120` -> `121`",
@@ -4430,7 +4430,7 @@
   },
   {
    "class": "C",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_desired.py",
    "func": "_table_name",
    "op": "const_int",
    "desc": "`120` -> `119`",
@@ -4439,7 +4439,7 @@
   },
   {
    "class": "B",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_plan.py",
    "func": "applied_fingerprint",
    "op": "const_str",
    "desc": "`'\\n--\\n'` -> `'\\n--\\nXX'`",
@@ -4448,7 +4448,7 @@
   },
   {
    "class": "B",
-   "file": "app/db/rls_apply.py",
+   "file": "app/db/rls_plan.py",
    "func": "_plan_table",
    "op": "const_str",
    "desc": "`';'` -> `';XX'`",

@@ -26,6 +26,13 @@ vi.mock("@/lib/api/portalWelcome", async (importOriginal) => ({
   resetPortalWelcome: (...a: unknown[]) => mockReset(...a),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("@/components/settings/useSettingsPreferences", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/settings/useSettingsPreferences")>()),
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 const DEFAULT = {
   heading: "Welcome to {practice_name}",
   body: "This is where you'll find what {practice_name} has asked you to do.",
@@ -37,6 +44,7 @@ const DEFAULT = {
 describe("PortalWelcomeCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isPracticeAdmin = true
     mockGet.mockResolvedValue(DEFAULT)
     mockSave.mockImplementation((draft: { heading: string; body: string }) => {
       const saved = { ...DEFAULT, ...draft, is_default: false }
@@ -103,6 +111,19 @@ describe("PortalWelcomeCard", () => {
     expect(await screen.findByTestId("portal-welcome-problems")).toHaveTextContent(
       "{client_name}",
     )
+  })
+
+  it("is read-only, with the reason, for a clinician who is not an admin", async () => {
+    isPracticeAdmin = false
+    mockGet.mockResolvedValue({ ...DEFAULT, is_default: false })
+    renderWithProviders(<PortalWelcomeCard />)
+
+    expect(await screen.findByLabelText("Heading")).toBeDisabled()
+    expect(screen.getByLabelText("Message")).toBeDisabled()
+    expect(screen.getByTestId("practice-admin-only")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Use the default" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Practice name" })).toBeDisabled()
   })
 
   it("goes back to the default", async () => {

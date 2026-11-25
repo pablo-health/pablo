@@ -3,11 +3,10 @@
 """How a practice comes to know which account owns it.
 
 ``platform.practices.owner_user_id`` is the practice's principal: the
-clinician whose diary a patient is offered a time in, and the identity
-:func:`app.routes.patient_booking.owner_session` arms before it reads the
-whole diary to work out what is free. Until the column is filled, every
-self-booking route refuses, because a booking with no clinician to make it
-with is not a booking.
+account that answers for the practice, whose recorded ownership the audit
+log's owner-read policy tests. It is not who a client books with; portal
+self-booking arms the client's own primary clinician
+(:func:`app.routes.patient_booking.clinician_session`).
 
 Nothing used to fill it. A practice is registered before anyone has signed
 in -- at boot for the deployment's own practice, or by whoever registers one

@@ -47,8 +47,22 @@ PRESETS: dict[str, Preset] = {
     # The unit tests cover reading the template; what it does to a schema is
     # only visible in a database.
     "rls-apply": Preset(
-        modules=("app/db/rls_apply.py",),
-        tests=("tests/test_rls_apply_desired.py",),
-        integration_tests=("tests_integration/database/test_rls_apply.py",),
+        modules=(
+            "app/db/rls_apply.py",
+            "app/db/rls_desired.py",
+            "app/db/rls_plan.py",
+        ),
+        tests=(
+            "tests/test_rls_apply_desired.py",
+            "tests/test_rls_apply_entry_points.py",
+            "tests/test_rls_plan.py",
+        ),
+        integration_tests=(
+            "tests_integration/database/rls_apply/test_damage_matrix.py",
+            "tests_integration/database/rls_apply/test_hardening.py",
+            "tests_integration/database/rls_apply/test_lifecycle.py",
+            "tests_integration/database/rls_apply/test_repair.py",
+            "tests_integration/database/rls_apply/test_stored_forms.py",
+        ),
     ),
 }

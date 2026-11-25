@@ -13,7 +13,7 @@ offers AND that nothing about that patient, that appointment, or its owner
 appears anywhere in the response body.
 
 **A booking cannot land on a taken slot.** The conflict check runs on the
-owner-armed session; on the patient's own session it would see only the
+clinician-armed session; on the patient's own session it would see only the
 caller's rows and every hour another patient holds would look free. The test
 books directly on top of another patient's appointment and requires a refusal.
 
@@ -28,7 +28,6 @@ issuance is a separate bead, and the resolver is not what is under test here.
 
 from __future__ import annotations
 
-import contextvars
 import os
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
@@ -334,68 +333,24 @@ def _client(  # type: ignore[no-untyped-def]
     """
     from app.auth.patient_context import (  # noqa: PLC0415
         AuthStrength,
-        PatientContext,
         get_patient_context,
     )
     from app.auth.route_access import (  # noqa: PLC0415
         subscription_exempt,
     )
-    from app.db import (  # noqa: PLC0415
-        arm_current_patient_id,
-        get_db_session,
-        set_tenant_schema,
-    )
     from app.main import app  # noqa: PLC0415
-    from fastapi.testclient import (  # noqa: PLC0415
-        TestClient,
+
+    from tests_integration.api._patient_client import (  # noqa: PLC0415
+        armed_patient_context,
+        fresh_context_client,
     )
 
     strength = AuthStrength.STEPPED_UP if stepped_up else AuthStrength.SINGLE_FACTOR
-
-    def _context() -> PatientContext:
-        """Stand in for the resolver AND for what it arms.
-
-        Returning a bare context is not enough. The real dependency also puts
-        the request's session into the tenant schema and arms
-        ``app.current_patient_id`` on it — so an override that skips that leaves
-        every route running against the template schema with no principal, and
-        the audit INSERT lands nowhere. That is not a smaller version of
-        production; it is a shape production cannot produce, and a test built on
-        it proves nothing about either.
-        """
-        context = PatientContext(
-            patient_id=patient_id,
-            practice_schema=practice["schema"],
-            credential_kind="bearer",
-            auth_strength=strength,
-        )
-        session = get_db_session()
-        set_tenant_schema(session, context.practice_schema)
-        arm_current_patient_id(session, context.patient_id)
-        return context
-
-    app.dependency_overrides[get_patient_context] = _context
+    app.dependency_overrides[get_patient_context] = lambda: armed_patient_context(
+        practice["schema"], patient_id, strength
+    )
     app.dependency_overrides[subscription_exempt] = lambda: None
-
-    # https, because SecurityHeadersMiddleware refuses plain HTTP outright —
-    # these routes carry appointment times, which is PHI. Not overridden away:
-    # a test client that quietly bypassed the transport rule would be testing a
-    # deployment shape that does not exist.
-    class _FreshContextClient(TestClient):
-        """Each request starts from an empty context, as it does under a server.
-
-        The seeding helpers here arm the clinician in the pytest thread, which
-        sets the request ContextVars there, and TestClient hands the calling
-        thread's context to the app. A patient request would then carry a
-        clinician id no production request can, and the first time its session
-        re-begins (after ``release_db_connection``) the RLS listener sees both
-        principals and refuses.
-        """
-
-        def request(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-            return contextvars.Context().run(super().request, *args, **kwargs)
-
-    client = _FreshContextClient(app, base_url="https://testserver", raise_server_exceptions=False)
+    client = fresh_context_client(app)
     try:
         yield client
     finally:
@@ -937,7 +892,7 @@ def test_a_booking_is_audited_as_the_patient(
 # --- reschedule and cancel -------------------------------------------------
 #
 # The route these exercise is keyed on the CLINICIAN's user id, because that is
-# what SchedulingService takes and the owner-armed session satisfies it for
+# what SchedulingService takes and the clinician-armed session satisfies it for
 # every appointment in the practice. Ownership is therefore checked in the
 # route and nowhere else, which makes the cross-patient tests below the load-
 # bearing ones rather than a formality.
@@ -1788,7 +1743,7 @@ def test_the_options_document_names_no_appointment_of_anybody(
     """It is about the practice, so it must carry nothing about a person.
 
     Seeded with the other patient's appointment on the day, because the route
-    opens an owner-armed session — the same session that can see the whole
+    opens a clinician-armed session — the same session that can see the whole
     diary — and a document that leaked from it would leak from there.
     """
     _open_policy(engine)
@@ -2220,7 +2175,7 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
 ) -> None:
     """A pasted room has no vendor handle, so it follows the move, and the client hears once.
 
-    The send runs over the owner-armed session after the move commits; the
+    The send runs over the clinician-armed session after the move commits; the
     practice is found from the patient's own schema.
     """
     from app.main import app  # noqa: PLC0415
