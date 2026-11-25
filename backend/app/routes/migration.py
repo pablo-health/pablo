@@ -7,6 +7,13 @@ apply, and — if it was the wrong archive — undo. Every route is scoped to th
 signed-in clinician's practice and audited by handle: run ids, counts and
 states, never a name, a file name or anything read from the archive.
 
+A run belongs to the clinician who started it. Its preview lists every client
+in the archive, and while the archive is kept its files can be opened, so no
+other clinician sees or acts on it, except the practice owner and the admins
+the owner named, who see every run in the practice. A run the caller may not
+see answers 404, exactly as one that does not exist, so ids cannot be probed;
+the history lists only the runs the caller may see.
+
 Preview and apply are background steps (see :mod:`app.migration.jobs`): the
 POST returns 202 with the run, and the screen polls the run until its state
 moves on. Nothing here waits on an archive being read.
@@ -30,6 +37,7 @@ from ..auth.service import (
     require_cloud_tasks_invoker,
 )
 from ..db import arm_current_user_id, get_db_session, release_db_connection, set_tenant_schema
+from ..db.platform_models import PracticeRow
 from ..jobs.task_queue import enqueue
 from ..migration.apply import ArchiveApplier
 from ..migration.jobs import archive_base, archive_store, run_apply, run_preview
@@ -54,6 +62,7 @@ from ..services.session_generation_worker import resolve_tenant_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .patients import get_patient_repository
+from .users import _is_practice_admin
 
 logger = logging.getLogger(__name__)
 
@@ -186,9 +195,26 @@ def _schema(ctx: TenantContext) -> str:
     return ctx.practice_schema
 
 
-def _run_or_404(run_id: str) -> Any:
+def _sees_every_run(ctx: TenantContext, user: User) -> bool:
+    """Whether the caller sees every clinician's imports, not just their own.
+
+    The practice owner and the admins the owner named do: the same rule the
+    practice-wide settings use (``app.routes.users._is_practice_admin``).
+    """
+    if not ctx.practice_id:
+        return False
+    practice = get_db_session().get(PracticeRow, ctx.practice_id)
+    return practice is not None and _is_practice_admin(practice, user)
+
+
+def _run_or_404(run_id: str, ctx: TenantContext, user: User) -> Any:
+    """The run, if the caller started it or sees every run; otherwise 404.
+
+    Never 403: a run someone else started answers exactly as one that does
+    not exist, so a clinician cannot learn which ids are in use.
+    """
     run = get_run(get_db_session(), run_id)
-    if run is None:
+    if run is None or (str(run.started_by) != user.id and not _sees_every_run(ctx, user)):
         raise NotFoundError("That import was not found.")
     return run
 
@@ -390,10 +416,11 @@ def list_imports(
     user: Annotated[User, Depends(require_baa_acceptance)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ImportRunList:
-    """Import history, newest first."""
+    """Import history, newest first: the caller's own runs, or every run for
+    the practice owner and its admins."""
     session = get_db_session()
     sweep_expired_archives(session, archive_store(), _schema(ctx), utc_now())
-    runs = list_runs(session)
+    runs = list_runs(session, started_by=None if _sees_every_run(ctx, user) else user.id)
     audit.log(
         "import_history_viewed",
         user,
@@ -405,12 +432,11 @@ def list_imports(
     return ImportRunList(runs=[ImportRunSummary(**_summary(r)) for r in runs])
 
 
-@router.get(
-    "/runs/{run_id}", response_model=ImportRunDetail, dependencies=[Depends(get_tenant_context)]
-)
+@router.get("/runs/{run_id}", response_model=ImportRunDetail)
 def get_import(
     run_id: str,
     request: Request,
+    ctx: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[User, Depends(require_baa_acceptance)],
     patients: Annotated[PatientRepository, Depends(get_patient_repository)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
@@ -419,7 +445,7 @@ def get_import(
 
     Once applied, also the clients it brought in who are still in the chart.
     """
-    run = _run_or_404(run_id)
+    run = _run_or_404(run_id, ctx, user)
     clients = _clients(run, patients, user.id)
     audit.log(
         "import_viewed",
@@ -445,7 +471,7 @@ def apply_import(
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ImportRunDetail:
     """Answer the preview's questions and land the archive."""
-    run = _run_or_404(run_id)
+    run = _run_or_404(run_id, ctx, user)
     if run.state != "previewed":
         raise ConflictError("This import is not ready to apply.", code="IMPORT_NOT_PREVIEWED")
     if run.archive_ref is None:
@@ -495,7 +521,7 @@ def undo_import(
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ImportRunDetail:
     """Take a run back out. Records edited since are kept unless asked."""
-    run = _run_or_404(run_id)
+    run = _run_or_404(run_id, ctx, user)
     if run.state != "applied":
         raise ConflictError("Only an applied import can be undone.", code="IMPORT_NOT_APPLIED")
     applier = ArchiveApplier(
@@ -533,7 +559,7 @@ def delete_import_archive(
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ImportRunDetail:
     """Delete the uploaded archive now rather than waiting for its expiry."""
-    run = _run_or_404(run_id)
+    run = _run_or_404(run_id, ctx, user)
     deleted = archive_store().delete(_schema(ctx), run.archive_ref)
     run.archive_ref = None
     run.archive_expires_at = None
@@ -558,7 +584,7 @@ def view_import_file(
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> FileResponse:
     """Open one file from the uploaded archive, so a record can be told apart."""
-    run = _run_or_404(run_id)
+    run = _run_or_404(run_id, ctx, user)
     root = archive_store().path(_schema(ctx), run.archive_ref or "")
     if root is None:
         raise NotFoundError("The uploaded archive is no longer available.")

@@ -241,9 +241,14 @@ def get_run(session: Session, run_id: str) -> ImportRunRow | None:
     return session.get(ImportRunRow, run_id)
 
 
-def list_runs(session: Session, *, limit: int = 50) -> list[ImportRunRow]:
-    stmt = select(ImportRunRow).order_by(ImportRunRow.started_at.desc()).limit(limit)
-    return list(session.execute(stmt).scalars())
+def list_runs(
+    session: Session, *, started_by: str | None = None, limit: int = 50
+) -> list[ImportRunRow]:
+    """The newest runs; only the ones ``started_by`` started, when given."""
+    stmt = select(ImportRunRow).order_by(ImportRunRow.started_at.desc())
+    if started_by is not None:
+        stmt = stmt.where(ImportRunRow.started_by == started_by)
+    return list(session.execute(stmt.limit(limit)).scalars())
 
 
 # --------------------------------------------------------------------------- archives
