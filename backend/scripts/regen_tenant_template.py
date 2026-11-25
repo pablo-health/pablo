@@ -85,23 +85,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.tenant_template_capture import (
     CAPTURE_SCHEMA,
     DIRECTORY_ACCESS_HEADING,
-    DIRECTORY_POLICY,
-    FINGERPRINT_PREFIX,
     ROW_SECURITY_MARKER,
     TENANT_SCHEMA_PLACEHOLDER,
     _post_process,
-    _row_security_section,
 )
 
 __all__ = [
     "CAPTURE_SCHEMA",
     "DIRECTORY_ACCESS_HEADING",
-    "DIRECTORY_POLICY",
-    "FINGERPRINT_PREFIX",
     "ROW_SECURITY_MARKER",
     "TENANT_SCHEMA_PLACEHOLDER",
     "_post_process",
-    "_row_security_section",
 ]
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "db" / "tenant_template.sql"
@@ -287,7 +281,14 @@ def main() -> None:
         if container is not None:
             container.stop()
 
-    row_security = _row_security_section(capture, CAPTURE_SCHEMA, schema_part)
+    # Text only, so importing it here touches no database. Imported late so
+    # this module stays importable without the app for its other helpers.
+    from app.db.rls_capture import row_security_section
+
+    try:
+        row_security = row_security_section(capture, CAPTURE_SCHEMA, schema_part)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     template = (
         schema_part
         + "\n"

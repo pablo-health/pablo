@@ -1,6 +1,10 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Normalize captured schema SQL and extract its row-level security section."""
+"""Normalize a ``pg_dump`` of the template schema into the template's schema half.
+
+The row-level security section after the marker is cut from a second dump by
+``app.db.rls_capture``.
+"""
 
 import re
 
@@ -11,12 +15,6 @@ TENANT_SCHEMA_PLACEHOLDER = "__TENANT_SCHEMA__"
 ROW_SECURITY_MARKER = "-- @@ row-level security: applied to practice schemas only @@\n"
 #: The scratch practice schema row-level security is captured from.
 CAPTURE_SCHEMA = "practice_template_capture"
-#: The comment ``enable_rls_on_schema`` writes on every policy it creates
-#: (``app.db.rls_state.FINGERPRINT_PREFIX``).
-FINGERPRINT_PREFIX = "rls-fingerprint-v1-"
-#: The practice directory's read policy (``app.db.practice_directory.DIRECTORY_POLICY``):
-#: the one policy kept without a fingerprint.
-DIRECTORY_POLICY = "rls_practice_directory_read"
 #: Opens the part of the section ``directory_access_sql`` writes.
 DIRECTORY_ACCESS_HEADING = (
     "-- Practice directory access: grants, pinned search paths and function ownership.\n"
@@ -98,80 +96,3 @@ def _post_process(dump: str) -> str:
 
     body = "\n".join(out_lines).rstrip() + "\n"
     return _HEADER + "\n" + body
-
-
-_RLS_FLAG = re.compile(r"^ALTER TABLE (?:ONLY )?(\S+) (?:ENABLE|FORCE) ROW LEVEL SECURITY;$")
-_POLICY_START = re.compile(r"^CREATE POLICY (\w+) ON (\S+) ")
-_POLICY_COMMENT = re.compile(r"^COMMENT ON POLICY (\w+) ON (\S+) IS '([^']*)';$")
-
-
-def _policies(sql: str) -> dict[tuple[str, str], str]:
-    """Every ``CREATE POLICY`` statement in ``sql``, keyed on (policy, table).
-
-    pg_dump writes one per entry, starting at column 0 and ending on the
-    first line that ends with ``;``.
-    """
-    found: dict[tuple[str, str], str] = {}
-    lines = sql.splitlines()
-    i = 0
-    while i < len(lines):
-        match = _POLICY_START.match(lines[i])
-        if not match:
-            i += 1
-            continue
-        start = i
-        while not lines[i].rstrip().endswith(";"):
-            i += 1
-        found[(match.group(1), match.group(2))] = "\n".join(lines[start : i + 1])
-        i += 1
-    return found
-
-
-def _row_security_section(dump: str, schema: str, schema_part: str) -> str:
-    """The row-level security statements of ``schema``'s dump, schema-neutral.
-
-    Kept: every RLS flag, every policy carrying a reconcile fingerprint
-    together with that fingerprint, and the practice directory's read
-    policies, which carry none. A policy the schema part already creates is
-    not created twice: identical, only its fingerprint is added; different,
-    it is dropped and replaced.
-    """
-    qualifier = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(schema)}\.")
-
-    def neutral(sql: str) -> str:
-        return qualifier.sub(f"{TENANT_SCHEMA_PLACEHOLDER}.", sql)
-
-    fingerprinted: dict[tuple[str, str], str] = {}
-    flags: list[str] = []
-    for line in dump.splitlines():
-        if _RLS_FLAG.match(line):
-            flags.append(neutral(line))
-            continue
-        comment = _POLICY_COMMENT.match(line)
-        if comment and comment.group(3).startswith(FINGERPRINT_PREFIX):
-            fingerprinted[(comment.group(1), neutral(comment.group(2)))] = neutral(line)
-
-    existing = _policies(schema_part)
-    statements = list(flags)
-    for (name, table), captured in _policies(dump).items():
-        key = (name, neutral(table))
-        fingerprint = fingerprinted.pop(key, None)
-        if fingerprint is None and name != DIRECTORY_POLICY:
-            continue
-        create = neutral(captured)
-        if key not in existing:
-            statements.append(create)
-        elif existing[key] != create:
-            statements.extend([f"DROP POLICY {name} ON {key[1]};", create])
-        if fingerprint is not None:
-            statements.append(fingerprint)
-    if fingerprinted:
-        raise SystemExit(f"fingerprints with no policy in the dump: {sorted(fingerprinted)}")
-
-    section = "\n\n".join(statements) + "\n"
-    if re.search(rf"(?<![A-Za-z0-9_]){re.escape(schema)}(?![A-Za-z0-9_])", section):
-        raise SystemExit(
-            f"the row-level security section still names {schema}; a policy would "
-            "be pinned to the capture schema instead of the one being provisioned"
-        )
-    return section
