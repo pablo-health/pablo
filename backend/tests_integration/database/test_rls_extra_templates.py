@@ -59,14 +59,25 @@ ALTER TABLE __TENANT_SCHEMA__.{_TABLE} ENABLE ROW LEVEL SECURITY;
 """
 
 
+def _clear_caches() -> None:
+    get_settings.cache_clear()
+    rls_runtime._desired_for.cache_clear()
+
+
+def _name_templates(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    """Set the setting after provisioning, which has already read and cached it."""
+    if value is None:
+        monkeypatch.delenv("TENANT_RLS_EXTRA_TEMPLATES", raising=False)
+    else:
+        monkeypatch.setenv("TENANT_RLS_EXTRA_TEMPLATES", value)
+    _clear_caches()
+
+
 @pytest.fixture(autouse=True)
 def _fresh_settings() -> Iterator[None]:
-    """Each test reads the setting it sets, and leaves nothing cached for the next."""
-    get_settings.cache_clear()
-    rls_runtime._desired_for.cache_clear()
+    """Leave nothing cached for the next module."""
     yield
-    get_settings.cache_clear()
-    rls_runtime._desired_for.cache_clear()
+    _clear_caches()
 
 
 @pytest.fixture
@@ -84,7 +95,7 @@ def practice_with_extra_table(engine: Engine) -> Iterator[str]:
 def test_strict_refuses_a_table_no_template_creates(
     engine: Engine, practice_with_extra_table: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("TENANT_RLS_EXTRA_TEMPLATES", raising=False)
+    _name_templates(monkeypatch, None)
 
     with pytest.raises(RuntimeError, match=_TABLE):
         reconcile_practice_rls(engine, practice_with_extra_table)
@@ -98,7 +109,7 @@ def test_a_named_template_gives_its_table_the_policy(
 ) -> None:
     extra = tmp_path / "deployment_template.sql"
     extra.write_text(_EXTRA_TEMPLATE)
-    monkeypatch.setenv("TENANT_RLS_EXTRA_TEMPLATES", f" {extra} , ")
+    _name_templates(monkeypatch, f" {extra} , ")
     schema = practice_with_extra_table
 
     reconcile_practice_rls(engine, schema)
@@ -128,7 +139,7 @@ def test_a_named_template_that_does_not_exist_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     missing = tmp_path / "not_shipped.sql"
-    monkeypatch.setenv("TENANT_RLS_EXTRA_TEMPLATES", str(missing))
+    _name_templates(monkeypatch, str(missing))
 
     with pytest.raises(RuntimeError, match=r"not_shipped\.sql"):
         rls_runtime.desired_rls()
