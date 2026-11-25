@@ -1561,16 +1561,15 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         "intake_blank_forms",
         "companion_auth_challenges",
         "companion_sessions",
-        # ``import_runs`` — one row per archive import a practice ran. Its
-        # preview names every client in the archive (name, birthday, contact
-        # details), so it is not content-free; but importing is the practice
-        # owner's and admins' act, and that separation between clinicians is
-        # enforced in ``app.routes.migration``, not by a row policy. Its ``id``
-        # would otherwise trip the force-RLS pre-flight with no policy shape
-        # that fits (no ``user_id`` and no ``patient_id``). ``import_records``,
-        # the per-row ledger beside it, needs no entry: its key is the source
-        # system's record id, so it has none of the columns the pre-flight
-        # looks for.
+        # ``import_runs`` — one row per archive import a practice ran. Its preview
+        # names every client in the archive (name, birthday, contact details), so
+        # it is not content-free; but importing is the practice owner's and
+        # admins' act, and that separation between clinicians is enforced in
+        # ``app.routes.migration``, not by a row policy. Its ``id`` would
+        # otherwise trip the force-RLS pre-flight with no policy shape that fits
+        # (no ``user_id`` and no ``patient_id``). ``import_records``, the per-row
+        # ledger beside it, needs no entry: its key is the source system's record
+        # id, so it has none of the columns the pre-flight looks for.
         "import_runs",
         # ``practice_admins`` — who the owner has made a practice admin. Its
         # ``user_id`` would earn it the generic "your own rows" policy, but

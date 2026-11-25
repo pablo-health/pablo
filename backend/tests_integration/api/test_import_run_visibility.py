@@ -28,16 +28,16 @@ Run: ``make test-integration``.
 
 from __future__ import annotations
 
-import io
 import os
 import uuid
-import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import text
+
+from tests_integration.api.test_import_archive_api import _zip
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -157,15 +157,6 @@ def client(
 
 
 # --------------------------------------------------------------------------- helpers
-
-
-def _zip(folder: Path) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(folder.rglob("*")):
-            if path.is_file() and path.name != "README.md" and path.suffix != ".py":
-                zf.write(path, f"Export - Complete - test/{path.relative_to(folder).as_posix()}")
-    return buf.getvalue()
 
 
 def _as(acting: dict[str, User], user_id: str) -> None:
