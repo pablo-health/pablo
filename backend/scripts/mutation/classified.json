@@ -4277,24 +4277,6 @@
   },
   {
    "class": "B",
-   "file": "app/db/rls_apply.py",
-   "func": "<module>",
-   "op": "const_str",
-   "desc": "`''` -> `'XX'`",
-   "snippet": "''",
-   "occurrence": 1
-  },
-  {
-   "class": "B",
-   "file": "app/db/rls_apply.py",
-   "func": "<module>",
-   "op": "const_str",
-   "desc": "`''` -> `'XX'`",
-   "snippet": "''",
-   "occurrence": 2
-  },
-  {
-   "class": "B",
    "file": "app/db/rls_desired.py",
    "func": "_row_security_statements",
    "op": "const_int",
@@ -4607,6 +4589,24 @@
    "desc": "delete body statement `cursor.close()`",
    "snippet": "cursor.close()",
    "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_desired.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_desired.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 1
   }
  ]
 }

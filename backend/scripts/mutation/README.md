@@ -51,7 +51,7 @@ let through:
 - The default is four workers, not eight, because each has a container to
   itself while its run lasts.
 
-The `rls-apply` preset is 445 mutants and takes about 50 minutes on four
+The `rls-apply` preset is 446 mutants and takes about 52 minutes on four
 workers. Most of that is the mutants only the integration tests can catch.
 
 A run that is killed from outside leaves its container behind, since nothing
