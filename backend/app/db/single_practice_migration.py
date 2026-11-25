@@ -29,7 +29,7 @@ branches in ``enable_rls_on_schema``. A copy can drift from its original, and a
 drifted copy here is worse than none: it would report zero invisible rows for a
 shape it no longer understands. Two things guard that. ``_classify`` raises on
 any table it does not recognise, exactly as ``enable_rls_on_schema`` raises
-rather than leave a table deny-all. And ``test_single_practice_migration.py``
+rather than leave a table deny-all. And ``tests_integration/database/single_practice_migration/``
 applies the REAL policies to a provisioned schema, reads ``pg_policies`` back,
 and asserts the classification here matches the policy actually created — so a
 new branch there fails a test here rather than silently under-reporting.
@@ -532,6 +532,12 @@ def migrate(engine: Engine, *, force: bool = False) -> list[OrphanCount]:
             text(f"SET search_path = {DEFAULT_PRACTICE_OWN_SCHEMA}, {PLATFORM_SCHEMA}, public")
         )
         enable_rls_on_schema(session, DEFAULT_PRACTICE_OWN_SCHEMA)
+        # The rename carried the directory functions with it, each with a
+        # search path that still names the old schema, and the template schema
+        # they came from never had the directory role's grants or policies.
+        from .practice_directory import apply_practice_directory_access
+
+        apply_practice_directory_access(session, DEFAULT_PRACTICE_OWN_SCHEMA)
         session.commit()
     logger.info(
         "Single-practice migration: row-level security applied to '%s'",

@@ -3129,12 +3129,12 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
         logger.info(plan.description, f"{schema_name}.{table_name}")
     record_fingerprints(session, schema_name, altered)
 
-    # The one read of ``patients`` that sees the whole practice: matching.
-    # Owner, grants and its two role-scoped policies — see the module.
-    from .practice_directory import apply_practice_directory_access
-
-    apply_practice_directory_access(session, schema_name)
-
+    # The practice directory's access (its read policies, grants and function
+    # ownership) is not set here. The template carries it for a new practice.
+    # The places that create or move a schema's objects another way call
+    # ``practice_directory.apply_practice_directory_access`` themselves: the
+    # revisions, the migrate fan-out, the archive restore and the
+    # single-practice conversion.
     session.commit()
     logger.info(
         "RLS reconcile on %s: %d tables verified, %d altered, %d skipped",

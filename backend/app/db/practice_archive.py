@@ -87,6 +87,7 @@ from ..utcnow import utc_now
 from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name, enable_rls_on_schema
 from .migrate_tenants import _alembic_config_for, _alembic_head
 from .platform_models import SCHEMA_READY
+from .practice_directory import apply_practice_directory_access
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
@@ -822,6 +823,11 @@ def _reconcile_rls_as(engine: Engine, schema_name: str, owner: str) -> None:
             with Session(bind=conn) as session:
                 session.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
                 enable_rls_on_schema(session, schema_name, strict=False)
+                # The dump keeps neither owners nor grants, so the directory
+                # functions come back owned by whoever restored them and the
+                # directory role holds nothing. Nothing else puts that back.
+                apply_practice_directory_access(session, schema_name)
+                session.commit()
         finally:
             conn.rollback()
             conn.execute(text("RESET ROLE"))

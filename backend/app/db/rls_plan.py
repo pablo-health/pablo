@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from .rls_state import SCHEMA_PLACEHOLDER, LivePolicy, LiveRls, read_live_rls, schema_neutral
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Mapping
 
     from sqlalchemy.orm import Session
 
@@ -68,13 +68,12 @@ def quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _plan_table(  # noqa: PLR0913 — one table's whole state, in and out
+def _plan_table(
     schema_name: str,
     table_name: str,
     desired: DesiredTable,
     flags: tuple[bool, bool],
     live: Mapping[str, LivePolicy],
-    leave: Collection[tuple[str, str]],
 ) -> tuple[list[str], list[str]]:
     """What takes one table from its live state to the desired one.
 
@@ -94,7 +93,7 @@ def _plan_table(  # noqa: PLR0913 — one table's whole state, in and out
     statements.extend(
         f"DROP POLICY {quote_identifier(name)} ON {qualified}"
         for name in sorted(live)
-        if name not in desired.policies and (table_name, name) not in leave
+        if name not in desired.policies
     )
 
     for name in sorted(desired.policies):
@@ -137,7 +136,6 @@ def plan_schema(
     session: Session,
     schema_name: str,
     desired: Mapping[str, DesiredTable],
-    leave: Collection[tuple[str, str]],
 ) -> SchemaPlan:
     plan = SchemaPlan(before=read_live_rls(session, schema_name))
     for table_name in sorted(desired):
@@ -152,7 +150,6 @@ def plan_schema(
             desired[table_name],
             flags,
             plan.before.policies.get(table_name, {}),
-            leave,
         )
         if statements:
             plan.statements[table_name] = statements
