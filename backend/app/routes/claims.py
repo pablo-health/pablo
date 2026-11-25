@@ -59,10 +59,9 @@ from ..auth.service import require_baa_acceptance
 from ..claims import reminders
 from ..claims.assembly import (
     AppointmentNotFoundError,
+    ClaimBuildError,
     ClaimSources,
     ClientNotFoundError,
-    NoActiveCoverageError,
-    PayerNotFoundError,
     build_claim_from_session,
     build_corrected_claim,
     build_void_claim,
@@ -199,6 +198,7 @@ def get_claim_sources(
         coverage=coverage,
         payers=payers,
         clinician_profiles=clinician_profiles,
+        users=users,
         billing_profile=lambda: billing_profile,
         timezone=_practice_timezone(users, user.id),
     )
@@ -371,15 +371,9 @@ def build_claim(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found."
         ) from exc
-    except NoActiveCoverageError as exc:
+    except ClaimBuildError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="The client has no active coverage on file.",
-        ) from exc
-    except PayerNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="The client's coverage names a payer that is no longer on file.",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail
         ) from exc
 
     created = claims.create(claim)
@@ -842,15 +836,9 @@ def correct_claim(
             status_code=status.HTTP_409_CONFLICT,
             detail="The visit this claim was built from is no longer on file; void it instead.",
         ) from exc
-    except NoActiveCoverageError as exc:
+    except ClaimBuildError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="The client has no active coverage on file.",
-        ) from exc
-    except PayerNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="The client's coverage names a payer that is no longer on file.",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail
         ) from exc
 
     created = claims.create(child)

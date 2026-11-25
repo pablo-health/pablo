@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from ..repositories.clinician_profile import ClinicianProfile, ClinicianProfileRepository
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
+    from ..repositories.user import UserRepository
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.appointment_type import AppointmentType
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
@@ -63,6 +64,9 @@ if TYPE_CHECKING:
 
 class ClaimBuildError(Exception):
     """The claim cannot be built from what is on file."""
+
+    #: What a route tells the clinician when it refuses the build with a 422.
+    detail = "The claim cannot be built from what is on file."
 
 
 class AppointmentNotFoundError(ClaimBuildError):
@@ -76,9 +80,19 @@ class ClientNotFoundError(ClaimBuildError):
 class NoActiveCoverageError(ClaimBuildError):
     """The client has no active coverage on file to build the claim against."""
 
+    detail = "The client has no active coverage on file."
+
+
+class RenderingClinicianNotFoundError(ClaimBuildError):
+    """The clinician who held the session has no user record."""
+
+    detail = "The clinician who held this session is no longer on file."
+
 
 class PayerNotFoundError(ClaimBuildError):
     """The coverage names a payer that is no longer on the practice's list."""
+
+    detail = "The client's coverage names a payer that is no longer on file."
 
 
 #: Crockford's base32 alphabet: digits and upper-case letters with the four
@@ -132,6 +146,7 @@ class ClaimSources:
     coverage: PatientCoverageRepository
     payers: PayerRepository
     clinician_profiles: ClinicianProfileRepository
+    users: UserRepository
     billing_profile: Callable[[], Mapping[str, object]]
     timezone: tzinfo
 
@@ -147,8 +162,9 @@ def build_claim_from_session(
     """A ``draft`` claim for the visit ``appointment_id`` was.
 
     Reads the appointment, its client, the client's active coverage and its
-    payer, the appointment type (for the rate), the clinician's profile
-    (for the rendering NPI and taxonomy) and the practice's billing
+    payer, the appointment type (for the rate), the profile of the clinician
+    who held the session (the rendering provider, whoever builds the claim)
+    and the practice's billing
     profile, and snapshots them into one claim with one line — two when
     ``add_on`` names a psychotherapy add-on delivered alongside the visit.
 
@@ -260,9 +276,15 @@ def _build(  # noqa: PLR0913 — the loader's inputs, keyword-only past the id
     payer = sources.payers.get(coverage.payer_id)
     if payer is None:
         raise PayerNotFoundError(coverage.payer_id)
+    clinician_id = appointment.user_id
+    clinician = user if clinician_id == user.id else sources.users.get(clinician_id)
+    if clinician is None:
+        raise RenderingClinicianNotFoundError(clinician_id)
     appointment_type = None
     if appointment.appointment_type_id is not None:
-        appointment_type = sources.appointment_types.get(appointment.appointment_type_id, user.id)
+        appointment_type = sources.appointment_types.get(
+            appointment.appointment_type_id, clinician_id
+        )
     return assemble_draft(
         appointment=appointment,
         patient=patient,
@@ -270,8 +292,8 @@ def _build(  # noqa: PLR0913 — the loader's inputs, keyword-only past the id
         payer=payer,
         appointment_type=appointment_type,
         billing_profile=sources.billing_profile(),
-        rendering_provider=sources.clinician_profiles.get(user.id),
-        user=user,
+        rendering_provider=sources.clinician_profiles.get(clinician_id),
+        clinician=clinician,
         timezone=sources.timezone,
         add_on=add_on,
         now=now,
@@ -289,7 +311,7 @@ def assemble_draft(  # noqa: PLR0913 — every source row the claim snapshots, k
     appointment_type: AppointmentType | None,
     billing_profile: Mapping[str, object],
     rendering_provider: ClinicianProfile | None,
-    user: User,
+    clinician: User,
     timezone: tzinfo,
     add_on: AddOnService | None = None,
     now: datetime | None = None,
@@ -351,7 +373,7 @@ def assemble_draft(  # noqa: PLR0913 — every source row the claim snapshots, k
         total_paid_cents=0,
         diagnosis_codes=diagnosis_codes,
         place_of_service=appointment.place_of_service,
-        billing_snapshot=billing_snapshot(billing_profile, rendering_provider, user),
+        billing_snapshot=billing_snapshot(billing_profile, rendering_provider, clinician),
         subscriber_snapshot=_subscriber_snapshot(patient, coverage, payer),
         created_at=built_at,
         updated_at=built_at,
@@ -362,14 +384,14 @@ def assemble_draft(  # noqa: PLR0913 — every source row the claim snapshots, k
 def billing_snapshot(
     billing_profile: Mapping[str, object],
     rendering_provider: ClinicianProfile | None,
-    user: User,
+    clinician: User,
 ) -> BillingSnapshot:
-    """Who is filing: the practice from its billing profile, the clinician from theirs.
+    """Who is filing: the practice from its billing profile, ``clinician`` from theirs.
 
     Shared with the superbill, which prints the same two parties a claim names.
     """
     rendering_npi = rendering_provider.npi_number if rendering_provider is not None else None
-    first_name, last_name = _split_name(user.legal_name or user.name)
+    first_name, last_name = _split_name(clinician.legal_name or clinician.name)
     return BillingSnapshot(
         billing_provider=BillingProviderSnapshot(
             legal_name=_text(billing_profile.get("legal_name")),
@@ -385,7 +407,7 @@ def billing_snapshot(
             phone=_text(billing_profile.get("phone")),
         ),
         rendering_provider=RenderingProviderSnapshot(
-            user_id=user.id,
+            user_id=clinician.id,
             first_name=first_name,
             last_name=last_name,
             npi=rendering_npi,

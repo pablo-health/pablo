@@ -23,6 +23,7 @@ service writes to an in-memory repository so the rows can be inspected.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -222,6 +223,12 @@ def _validated(harness: dict[str, Any]) -> dict[str, Any]:
     return resp.json()["claim"]
 
 
+def _hand_the_session_to_a_departed_clinician(harness: dict[str, Any]) -> None:
+    """The visit stays visible to the builder; its clinician has no user record."""
+    appointment = harness["appointments"].get(_APPOINTMENT_ID, _USER_ID)
+    harness["appointments"].update(dataclasses.replace(appointment, user_id="departed"))
+
+
 def _audit_rows(harness: dict[str, Any]) -> list[Any]:
     """The clinician's audit rows in the order they were written.
 
@@ -283,6 +290,12 @@ class TestBuild:
         resp = harness["client"].post(f"/api/claims/from-session/{_APPOINTMENT_ID}")
         assert resp.status_code == 422
         assert "coverage" in resp.json()["detail"]
+
+    def test_session_whose_clinician_is_gone_is_422(self, harness: dict[str, Any]) -> None:
+        _hand_the_session_to_a_departed_clinician(harness)
+        resp = harness["client"].post(f"/api/claims/from-session/{_APPOINTMENT_ID}")
+        assert resp.status_code == 422
+        assert "clinician" in resp.json()["detail"]
 
     def test_build_is_audited_with_identifiers_only(self, harness: dict[str, Any]) -> None:
         built = _build(harness)
@@ -551,6 +564,15 @@ class TestCorrect:
         resp = harness["client"].post(f"/api/claims/{parent['id']}/correct")
         assert resp.status_code == 409
         assert "void" in resp.json()["detail"]
+
+    def test_correcting_when_the_sessions_clinician_is_gone_is_422(
+        self, harness: dict[str, Any]
+    ) -> None:
+        parent = _validated(harness)
+        _hand_the_session_to_a_departed_clinician(harness)
+        resp = harness["client"].post(f"/api/claims/{parent['id']}/correct")
+        assert resp.status_code == 422
+        assert "clinician" in resp.json()["detail"]
 
 
 class TestVoid:
