@@ -1503,12 +1503,10 @@ class PatientMessageThreadRow(Base):
     it. A reader looking for the access rule should look at
     ``has_patient_access`` and stop.
 
-    ``clinician_last_read_at`` is one timestamp for the practice side, not
-    one per clinician: what a thread list needs is "has anything arrived
-    since somebody here looked", and per-clinician state would be a second
-    table to answer a question nobody asked. The patient side keeps its own
-    per-message ``read_at`` on :class:`PatientMessageRow`, which is a
-    different fact and stays separate.
+    ``clinician_last_read_at`` is no longer read. What a clinician has read
+    is per clinician, in :class:`PatientMessageThreadReadRow`, so a colleague
+    opening a thread leaves it unread for the client's own clinician. The
+    column stays until a later revision drops it.
 
     ``last_message_at`` is denormalized from the newest message so a patient's
     thread list sorts without touching the message table.
@@ -1549,6 +1547,26 @@ class PatientMessageThreadRow(Base):
         ),
         UniqueConstraint("id", "patient_id", name="uq_patient_message_threads_id_patient"),
     )
+
+
+class PatientMessageThreadReadRow(Base):
+    """When one clinician last read one thread.
+
+    A clinician's unread count for a thread is the client's messages newer
+    than their own row; no row means all of them. ``user_id`` gives the table
+    the direct-ownership row policy, so each clinician reads and writes only
+    their own marker.
+    """
+
+    __tablename__ = "patient_message_thread_reads"
+
+    thread_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patient_message_threads.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class PatientMessageRow(Base):
