@@ -19,6 +19,7 @@ from ..auth.service import (
     get_current_user,
     get_tenant_context,
     require_active_subscription,
+    require_baa_acceptance,
 )
 from ..models import User
 from ..models.audit import AuditAction, ResourceType
@@ -115,10 +116,12 @@ def update_ehr_route_step(
     ehr_system: EhrSystem,
     step_index: int,
     request: UpdateEhrRouteStepRequest,
-    _user: User = Depends(get_current_user),
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
     repo: EhrRouteRepository = Depends(get_ehr_route_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> EhrRouteResponse:
-    """Update a step in an EHR route (route learning).
+    """Update a step in the practice's shared EHR route (route learning).
 
     Called by the companion app after LLM-assisted recovery finds a new
     working selector, so future therapists benefit.
@@ -135,6 +138,17 @@ def update_ehr_route_step(
 
     if updated is None:
         raise NotFoundError(f"No route found for EHR system '{ehr_system}'")
+
+    # Any clinician's companion may teach the shared route, so there is no
+    # owner gate; the audit row records who changed which step.
+    audit.log(
+        AuditAction.EHR_ROUTE_STEP_UPDATED,
+        user,
+        http_request,
+        resource_type=ResourceType.EHR_ROUTE,
+        resource_id=ehr_system.value,
+        changes={"step_index": step_index},
+    )
     return EhrRouteResponse.from_ehr_route(updated)
 
 
