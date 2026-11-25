@@ -188,6 +188,8 @@ class AuditAction(StrEnum):
     ONBOARDING_BAA_ACCEPTED = "onboarding_baa_accepted"
     ONBOARDING_MFA_ENROLLED = "onboarding_mfa_enrolled"
     ONBOARDING_SECURITY_GUIDE_ACKNOWLEDGED = "onboarding_security_guide_acknowledged"
+    # A clinician who does not own the practice was shown that its agreement is in force.
+    ONBOARDING_PRACTICE_AGREEMENT_NOTICE_SEEN = "onboarding_practice_agreement_notice_seen"
     ONBOARDING_COMPLETED = "onboarding_completed"
 
     # The practice owner changing the practice's display name, and choosing to

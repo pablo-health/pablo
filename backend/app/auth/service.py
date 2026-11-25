@@ -1497,30 +1497,19 @@ def require_active_subscription(
 def require_baa_acceptance(
     user: User = Depends(require_active_subscription),
 ) -> User:
-    """
-    Verify that the user has accepted the Business Associate Agreement.
+    """Clear ``user`` for PHI routes once the Business Associate Agreement is accepted.
 
-    HIPAA REQUIREMENT: Users must accept BAA before accessing Protected Health
-    Information (PHI). This dependency should be used on all routes that access
-    patient data or other PHI.
-
-    For self-hosted installations, this check can be disabled by setting
-    REQUIRE_BAA=false in the environment.
-
-    Args:
-        user: Current authenticated user
-
-    Returns:
-        User object if BAA is accepted
-
-    Raises:
-        HTTPException: 403 Forbidden if BAA not accepted (when REQUIRE_BAA=true)
+    HIPAA requires it before any PHI route; put this dependency on every one.
+    A clinician who does not own the practice is cleared by the practice's
+    acceptance. ``REQUIRE_BAA=false`` turns the check off for self-hosting.
     """
     settings = get_settings()
     if not settings.require_baa:
         return user
 
-    if not user.baa_accepted_at:
+    from ..routes.practice_agreement import practice_agreement_clears
+
+    if not user.baa_accepted_at and not practice_agreement_clears(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={

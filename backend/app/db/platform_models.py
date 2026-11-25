@@ -881,6 +881,11 @@ class PlatformUserRow(PlatformBase):
     # source null.
     import_source: Mapped[str | None] = mapped_column(String(32))
     import_prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When a clinician who does not own the practice was shown, once, that the
+    # practice's agreement is in force (users.py, practice-agreement-notice).
+    practice_agreement_notice_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     chat_quality_review_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     chat_quality_review_opt_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     chat_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -561,6 +561,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("patch", "/api/users/me/professional-info"),  # updates caller's own license info
         ("post", "/api/users/me/accept-baa"),  # records caller's own BAA acceptance
         ("post", "/api/users/me/acknowledge-security-guide"),  # records caller's own ack
+        ("post", "/api/users/me/practice-agreement-notice"),  # caller saw the notice
         ("post", "/api/users/me/mfa-enrolled"),  # records caller's own MFA enrollment
         ("put", "/api/users/me/preferences"),  # saves caller's own preferences
         ("patch", "/api/users/me/preferences"),  # changes some of caller's own preferences

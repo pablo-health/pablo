@@ -121,6 +121,7 @@ from .routes import (
     payment_webhooks,
     people_term,
     practice_admins,
+    practice_agreement,
     practice_ai_notes_consent,
     practice_balances,
     practice_billing,
@@ -361,6 +362,7 @@ app.include_router(passkey.router)
 app.include_router(admin.router)
 app.include_router(admin_pentest.router)
 app.include_router(users.router)
+app.include_router(practice_agreement.router)
 app.include_router(people_term.router)
 app.include_router(practice_ai_notes_consent.router)
 app.include_router(practice_client_video_link.router)
