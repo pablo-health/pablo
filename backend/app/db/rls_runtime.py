@@ -29,13 +29,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..settings import get_settings
+from . import RlsReconcileCounts, _validate_schema_name
 from .rls_apply import apply_tenant_rls, desired_from_sql
 from .rls_state import read_live_rls
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from . import RlsReconcileCounts
     from .rls_desired import DesiredTable
 
 _ENGINE_TEMPLATE = Path(__file__).resolve().parent / "tenant_template.sql"
@@ -72,8 +72,6 @@ def apply_practice_rls(session: Session, schema_name: str, *, strict: bool) -> R
     With ``strict``, raises before changing anything if the schema holds a
     table no template creates.
     """
-    from . import _validate_schema_name  # the package imports this module
-
     _validate_schema_name(schema_name)
     desired = desired_rls()
     if strict:
@@ -86,3 +84,18 @@ def apply_practice_rls(session: Session, schema_name: str, *, strict: bool) -> R
             )
             raise RuntimeError(msg)
     return apply_tenant_rls(session, schema_name, desired)
+
+
+def enable_rls_on_schema(
+    session: Session,  # noqa: ARG001 — the signature landed revisions call
+    schema_name: str,
+    *,
+    strict: bool = True,  # noqa: ARG001
+) -> RlsReconcileCounts:
+    """Does nothing; landed revisions call it mid-chain and are never edited.
+
+    Head's policies can name columns that do not exist yet mid-chain, so the
+    pass after the chain (:func:`apply_practice_rls`) sets every policy.
+    """
+    _validate_schema_name(schema_name)
+    return RlsReconcileCounts(applied=0, skipped=0, altered=0)

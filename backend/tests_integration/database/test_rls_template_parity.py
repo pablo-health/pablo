@@ -93,18 +93,6 @@ def _reconcile(engine: Engine, schema: str) -> Any:
     return reconcile_practice_rls(engine, schema)
 
 
-def _infer(engine: Engine, schema: str) -> Any:
-    """The planner the template is captured from, as the regen runs it."""
-    from app.db import PLATFORM_SCHEMA, infer_rls_on_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
-
-    with OrmSession(engine) as session:
-        session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-        counts = infer_rls_on_schema(session, schema)
-        session.commit()
-        return counts
-
-
 def _state(engine: Engine, schema: str) -> tuple[set[tuple[Any, ...]], set[tuple[Any, ...]]]:
     """Every table's RLS flags and every policy, with the schema name taken out."""
     from app.db.rls_state import schema_neutral  # noqa: PLC0415
@@ -145,10 +133,12 @@ def rebuilt(engine: Engine) -> Iterator[tuple[str, Any]]:
         _stamp_alembic_at_head,
     )
 
+    from tests_integration.database.planner_practice import run_planner  # noqa: PLC0415
+
     schema = _new_schema("rls_rebuilt")
     _apply_tenant_template(engine, schema)
     _stamp_alembic_at_head(engine, schema)
-    counts = _infer(engine, schema)
+    counts = run_planner(engine, schema)
     with engine.begin() as conn:
         apply_practice_directory_access(conn, schema)
     yield schema, counts

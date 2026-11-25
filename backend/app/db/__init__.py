@@ -2030,28 +2030,6 @@ def _patient_principal_policy_statements(
     )
 
 
-def enable_rls_on_schema(
-    session: Session,  # noqa: ARG001 — the signature landed revisions call
-    schema_name: str,
-    *,
-    strict: bool = True,  # noqa: ARG001
-) -> RlsReconcileCounts:
-    """Does nothing. Kept because landed revisions call it.
-
-    Row-level security on a live practice schema is set in one place,
-    ``rls_runtime.apply_practice_rls``, which makes the schema match the
-    tenant templates. A landed revision is never edited, and doing nothing
-    where one calls this mid-chain is correct: head's policies can name
-    columns that do not exist yet at that point, and the pass after the chain
-    (``migrate_tenants.reconcile_tenant_rls``) puts every policy in place.
-
-    Deciding policies from a schema's columns is the template regen's job:
-    see :func:`infer_rls_on_schema`.
-    """
-    _validate_schema_name(schema_name)
-    return RlsReconcileCounts(applied=0, skipped=0, altered=0)
-
-
 def infer_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registration guard
     session: Session, schema_name: str, *, strict: bool = True
 ) -> RlsReconcileCounts:
@@ -2402,8 +2380,10 @@ def rls_forced_tenant_tables() -> set[str]:
 # registers the Session listener that drops cached practice resolutions when a
 # mapping or practice row commits a change, and every writer of those rows
 # imports this package first. The tenant-session primitives are re-exported so
-# callers can import them from the package root without knowing the sub-module.
+# callers can import them from the package root without knowing the sub-module,
+# and the no-op ``enable_rls_on_schema`` because landed revisions import it here.
 from . import practice_resolution_cache  # noqa: E402
+from .rls_runtime import enable_rls_on_schema  # noqa: E402
 from .tenant_session import run_in_tenant, tenant_db_session  # noqa: E402
 
 # Names read from other modules rather than from here, so they have to be
@@ -2422,6 +2402,7 @@ __all__ = [
     "PATIENT_WRITE_NARROWING",
     "PLATFORM_SCHEMA",
     "OwnerScope",
+    "enable_rls_on_schema",
     "practice_resolution_cache",
     "register_overlay_not_row_scoped",
     "register_overlay_owner_scoped",
