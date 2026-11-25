@@ -21,7 +21,13 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import update
 
-from ..api_errors import BadRequestError, ForbiddenError, NotFoundError, ServerError
+from ..api_errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServerError,
+)
 from ..auth.providers import VerifiedIdentity
 from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
@@ -892,24 +898,65 @@ def get_baa_status(
         - current_version: The current BAA version
         - signed_practice_name: The practice name the agreement on file
           was signed under (if a practice-level acceptance exists)
+        - for a clinician who does not own the practice: the practice's
+          acceptance, who accepted it, and whether they have seen the notice
     """
-    signed_practice_name: str | None = None
-    practice_id = _resolve_practice_id_for(user)
-    if practice_id is not None:
-        from ..db import get_db_session
-        from ..db.platform_models import PracticeRow
+    from ..people_term_lookup import practice_row_for
 
-        practice = get_db_session().get(PracticeRow, practice_id)
-        if practice is not None:
-            signed_practice_name = practice.baa_practice_name
-
+    practice = practice_row_for(user)
+    if practice is None or _is_practice_owner(practice, user):
+        return BAAStatusResponse(
+            accepted=user.baa_accepted_at is not None,
+            accepted_at=user.baa_accepted_at,
+            version=user.baa_version,
+            current_version=current_version,
+            signed_practice_name=practice.baa_practice_name if practice else None,
+        )
     return BAAStatusResponse(
         accepted=user.baa_accepted_at is not None,
         accepted_at=user.baa_accepted_at,
         version=user.baa_version,
         current_version=current_version,
-        signed_practice_name=signed_practice_name,
+        signed_practice_name=practice.baa_practice_name,
+        is_practice_owner=False,
+        may_accept_new_versions=_is_practice_admin(practice, user),
+        practice_accepted_at=practice.baa_accepted_at,
+        practice_version=practice.baa_version,
+        practice_accepted_by=practice.baa_legal_name,
+        notice_seen_at=user.practice_agreement_notice_seen_at,
     )
+
+
+@router.post("/me/practice-agreement-notice")
+def mark_practice_agreement_notice_seen(
+    http_request: Request,
+    user: User = Depends(get_current_user_no_mfa),
+    current_version: str = Depends(get_baa_version),
+    user_repo: UserRepository = Depends(get_user_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> BAAStatusResponse:
+    """Record that a clinician who does not own the practice saw, once, that
+    the practice's agreement is in force. Pre-MFA, like ``accept_baa``.
+
+    A second call keeps the first time. 409 before the practice has accepted.
+    """
+    from ..people_term_lookup import practice_row_for
+
+    practice = practice_row_for(user)
+    if practice is None or _is_practice_owner(practice, user):
+        raise BadRequestError("Only a clinician who does not own the practice sees this notice")
+    if practice.baa_accepted_at is None:
+        raise ConflictError(
+            "The practice has not accepted the agreement yet",
+            code="PRACTICE_AGREEMENT_PENDING",
+        )
+    if user.practice_agreement_notice_seen_at is None:
+        user.practice_agreement_notice_seen_at = utc_now()
+        user_repo.update(user)
+        audit.log_onboarding_milestone(
+            AuditAction.ONBOARDING_PRACTICE_AGREEMENT_NOTICE_SEEN, user, http_request
+        )
+    return get_baa_status(user, current_version)
 
 
 @router.post("/me/accept-baa")
@@ -1054,10 +1101,9 @@ def _record_baa_acceptance(
 
         session = get_db_session()
         practice = session.get(PracticeRow, practice_id)
-        if practice is not None and not _is_practice_owner(practice, user):
-            # The agreement is the practice's, signed by its owner. Another
-            # clinician accepting it at onboarding clears their own gate
-            # (below) but must not replace the owner's signed snapshot.
+        if practice is not None and not _is_practice_admin(practice, user):
+            # The agreement is the practice's, accepted by its owner or an
+            # admin. Anyone else accepting clears only their own gate (below).
             signed_practice_name = practice.baa_practice_name
         elif practice is not None:
             practice.baa_accepted_at = now

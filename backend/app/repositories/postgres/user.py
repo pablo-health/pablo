@@ -149,6 +149,7 @@ def _row_to_user(row: PlatformUserRow) -> User:
         profile_basics_completed_at=row.profile_basics_completed_at,
         import_source=row.import_source,
         import_prompted_at=row.import_prompted_at,
+        practice_agreement_notice_seen_at=row.practice_agreement_notice_seen_at,
     )
 
 
@@ -181,3 +182,4 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.profile_basics_completed_at = user.profile_basics_completed_at
     row.import_source = user.import_source
     row.import_prompted_at = user.import_prompted_at
+    row.practice_agreement_notice_seen_at = user.practice_agreement_notice_seen_at

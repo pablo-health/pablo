@@ -1499,6 +1499,8 @@ def require_baa_acceptance(
 ) -> User:
     """
     Verify that the user has accepted the Business Associate Agreement.
+    A clinician who does not own the practice is cleared by the practice's
+    acceptance instead (``_practice_agreement_clears``).
 
     HIPAA REQUIREMENT: Users must accept BAA before accessing Protected Health
     Information (PHI). This dependency should be used on all routes that access
@@ -1520,6 +1522,8 @@ def require_baa_acceptance(
     if not settings.require_baa:
         return user
 
+    if not user.baa_accepted_at and _practice_agreement_clears(user):
+        return user
     if not user.baa_accepted_at:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1540,6 +1544,34 @@ def require_baa_acceptance(
             },
         )
     return user
+
+
+def _practice_agreement_clears(user: User) -> bool:
+    """Whether ``user``, not the practice owner, is cleared by the practice's acceptance.
+
+    The agreement binds the practice, so any version the owner (or an admin)
+    accepted clears everyone else. Raises the waiting-state 403 before then.
+    """
+    from ..people_term_lookup import practice_row_for
+    from ..routes.users import _is_practice_owner
+
+    practice = practice_row_for(user)
+    if practice is None or _is_practice_owner(practice, user):
+        return False
+    if practice.baa_accepted_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "PRACTICE_AGREEMENT_PENDING",
+                    "message": (
+                        "Your practice has not accepted the Business Associate Agreement yet"
+                    ),
+                    "details": {"baa_accepted": False},
+                }
+            },
+        )
+    return True
 
 
 def _verify_google_oidc_token(token: str, audience: str) -> dict[str, object]:

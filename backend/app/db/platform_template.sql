@@ -710,7 +710,8 @@ CREATE TABLE platform.users (
     inbox_quality_review_opt_in_at timestamp with time zone,
     inbox_quality_review_opt_out_at timestamp with time zone,
     import_source character varying(32),
-    import_prompted_at timestamp with time zone
+    import_prompted_at timestamp with time zone,
+    practice_agreement_notice_seen_at timestamp with time zone
 );
 
 ALTER TABLE ONLY platform.allowed_emails

@@ -343,6 +343,14 @@ class BAAStatusResponse(BaseModel):
     # offer to sign again after the practice is renamed. None when no
     # practice-level acceptance has been recorded.
     signed_practice_name: str | None = None
+    # A clinician who does not own the practice is cleared by the practice's
+    # acceptance, not their own; these fields are for that screen.
+    is_practice_owner: bool = True
+    may_accept_new_versions: bool = True
+    practice_accepted_at: datetime | None = None
+    practice_version: str | None = None
+    practice_accepted_by: str | None = None
+    notice_seen_at: datetime | None = None
 
 
 class AcknowledgeSecurityGuideRequest(BaseModel):
@@ -395,6 +403,7 @@ class User:
     profile_basics_completed_at: datetime | None = None
     import_source: str | None = None
     import_prompted_at: datetime | None = None
+    practice_agreement_notice_seen_at: datetime | None = None
     chat_quality_review_opt_in: bool = False
     chat_quality_review_opt_in_at: datetime | None = None
     chat_quality_review_opt_out_at: datetime | None = None
@@ -475,6 +484,7 @@ class User:
             quality_review_consent_prompted_at=data.get("quality_review_consent_prompted_at"),
             import_source=data.get("import_source"),
             import_prompted_at=data.get("import_prompted_at"),
+            practice_agreement_notice_seen_at=data.get("practice_agreement_notice_seen_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:
