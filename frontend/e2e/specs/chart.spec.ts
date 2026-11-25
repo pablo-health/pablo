@@ -1,7 +1,12 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { test, expect } from "../fixtures/auth"
-import { givePatient, giveTranscribedSession, giveVisitReadyToBill } from "../fixtures/scenarios"
+import {
+  givePatient,
+  giveTranscribedSession,
+  giveVisitReadyToBill,
+  type BilledVisit,
+} from "../fixtures/scenarios"
 
 test("the patient chart renders without browser errors", async ({ signedInPage: page, api }) => {
   const patient = await givePatient(api)
@@ -135,7 +140,7 @@ test.describe("What is in a client's chart", () => {
     // finalized. The list is ordered by when a note was finalized, not by the
     // visit's date: each visit here is booked an hour before the one seeded
     // ahead of it, so the newest note on the list is the oldest visit.
-    const visits = []
+    const visits: BilledVisit[] = []
     for (let i = 0; i < 4; i++) {
       visits.push(
         await giveVisitReadyToBill(api, patient.id, {
@@ -146,7 +151,7 @@ test.describe("What is in a client's chart", () => {
         }),
       )
     }
-    const hrefFor = (visit: (typeof visits)[number]) => `/dashboard/sessions/${visit.sessionId}`
+    const hrefFor = (visit: BilledVisit) => `/dashboard/sessions/${visit.sessionId}`
     await page.goto(`/dashboard/patients/${patient.id}`)
 
     await expect(page.getByRole("tab", { name: "Notes 4" })).toBeVisible()
