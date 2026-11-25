@@ -20,33 +20,9 @@ as they are.
 file lacks, whatever its name and whoever created it. There are no exceptions
 to name: a policy that should exist is in the file.
 
-**How a difference is found.** Each live policy is rendered the way ``pg_dump``
-writes one and compared with the file's statement, which ``pg_dump`` also
-wrote. Equal text means the policy is the file's. That catches a policy edited
-by hand (``ALTER POLICY``), which a comment on the policy would not: the
-comment survives the edit.
-
-Equal text is not the only way to be right, though. Postgres does not always
-store a statement in the form it would print it back: applying
-``= ANY ((ARRAY['a'::character varying])::text[])`` stores
-``= ANY (ARRAY[('a'::character varying)::text])``, which means the same and
-reads differently. So a policy created from the file can differ from the file
-as text for ever. When the applier creates a policy and reads back something
-other than what it ran, it records a hash of the two together as the policy's
-comment (``rls-applied-v1-…``). On the next pass that hash matching is the
-second way to be right: this is exactly what the file's statement turned into
-here. An edit by hand changes what is stored, so the hash stops matching.
-
-A server whose deparser differs from the one the template was captured on is
-the same case, and is handled the same way: one rebuild, then the recorded
-hash. So is a policy that names roles, which ``pg_dump`` may list in another
-order.
-
-**What this is not.** It finds drift: a schema older than a policy, a policy
-the file has lost, an edit made by hand. It is not a defence against someone
-who can run DDL on the schema. The hash has no secret in it, so they could
-write a matching comment beside an edit; they could also change a policy the
-moment a pass has finished.
+**How a difference is found.** See ``rls_plan``, which does the comparing. In
+short: a live policy is compared with the file's statement as ``pg_dump`` text,
+and a recorded hash covers a policy Postgres stores in another form.
 
 **What "altered" counts.** Tables whose flags or policies ended up different.
 A policy dropped and created again into exactly what it was, to record its
@@ -206,6 +182,11 @@ def _execute(session: Session, statements: Iterable[str]) -> None:
     nothing else on the path means a name can only resolve to what the file
     says, whatever the caller's session had on its own path. The caller's path
     is put back before returning.
+
+    If a statement fails, the path is not put back here, and must not be: the
+    transaction is aborted, so one more statement would raise its own error
+    and hide the one that matters. The empty path was set for this transaction
+    only, and goes when the caller rolls it back.
     """
     statements = list(statements)
     if not statements:
@@ -216,10 +197,8 @@ def _execute(session: Session, statements: Iterable[str]) -> None:
         row = cursor.fetchone()
         previous = row[0] if row else ""
         cursor.execute("SELECT pg_catalog.set_config('search_path', '', true)")
-        try:
-            for statement in statements:
-                cursor.execute(statement)
-        finally:
-            cursor.execute("SELECT pg_catalog.set_config('search_path', %s, true)", (previous,))
+        for statement in statements:
+            cursor.execute(statement)
+        cursor.execute("SELECT pg_catalog.set_config('search_path', %s, true)", (previous,))
     finally:
         cursor.close()

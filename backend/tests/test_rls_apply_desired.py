@@ -196,3 +196,11 @@ def test_a_semicolon_inside_a_string_does_not_end_the_policy() -> None:
 def test_a_policy_that_never_ends_is_refused() -> None:
     with pytest.raises(ValueError, match="no end"):
         desired_from_sql(_TABLES + "\nCREATE POLICY p ON __TENANT_SCHEMA__.notes USING (true)\n")
+
+
+def test_a_quoted_table_name_is_refused() -> None:
+    """Names are compared as plain text all the way through, so a quoted one cannot be read."""
+    with pytest.raises(ValueError, match="qualified"):
+        desired_from_sql(
+            _TABLES + '\nALTER TABLE __TENANT_SCHEMA__."Notes" ENABLE ROW LEVEL SECURITY;\n'
+        )

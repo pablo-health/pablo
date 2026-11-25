@@ -11,10 +11,17 @@ from __future__ import annotations
 
 import ast
 import textwrap
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+from scripts.mutation import run
 from scripts.mutation.generate import generate_module
+from scripts.mutation.presets import PRESETS
 from scripts.mutation.run import mutated_source, unmutated_source
-from scripts.mutation.score import content_keys
+from scripts.mutation.score import classify_run, content_keys
+
+if TYPE_CHECKING:
+    import pytest
 
 SOURCE = textwrap.dedent(
     '''
@@ -113,3 +120,87 @@ def test_a_judgement_is_found_again_after_the_module_moves() -> None:
     after = content_keys(after_mutants)
     # Every mutant of the original code keeps its key; only the new helper adds keys.
     assert set(before.values()) <= set(after.values())
+
+
+class _FakePytest:
+    """Stands in for a pytest invocation: records what was asked, answers as told."""
+
+    def __init__(self, statuses: dict[str, str]) -> None:
+        self.statuses = statuses
+        self.calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+
+    def __call__(
+        self, _backend: Path, tests: tuple[str, ...], _timeout: int, *extra: str
+    ) -> dict[str, Any]:
+        self.calls.append((tests, extra))
+        return {"status": self.statuses[tests[0]], "failed": [], "errors": [], "elapsed": 1.5}
+
+
+def _two_phase(monkeypatch: pytest.MonkeyPatch, unit: str, integration: str) -> _FakePytest:
+    fake = _FakePytest({"tests/unit.py": unit, "tests_integration/db.py": integration})
+    monkeypatch.setattr(run, "_pytest", fake)
+    return fake
+
+
+def test_a_mutant_the_unit_tests_catch_never_reaches_a_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _two_phase(monkeypatch, unit="killed", integration="survived")
+
+    result = run._run_tests(Path(), ("tests/unit.py",), ("tests_integration/db.py",))
+
+    assert result["status"] == "killed"
+    assert fake.calls == [(("tests/unit.py",), ())]
+
+
+def test_a_mutant_the_unit_tests_miss_is_given_to_the_integration_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As a second invocation, stopping at the first failure, with both runs' time."""
+    fake = _two_phase(monkeypatch, unit="survived", integration="killed")
+
+    result = run._run_tests(Path(), ("tests/unit.py",), ("tests_integration/db.py",))
+
+    assert result["status"] == "killed"
+    assert fake.calls == [(("tests/unit.py",), ()), (("tests_integration/db.py",), ("-x",))]
+    assert result["elapsed"] == 3.0
+
+
+def test_it_survives_only_if_both_suites_let_it_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    _two_phase(monkeypatch, unit="survived", integration="survived")
+
+    result = run._run_tests(Path(), ("tests/unit.py",), ("tests_integration/db.py",))
+
+    assert result["status"] == "survived"
+
+
+def test_a_preset_may_have_integration_tests_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _two_phase(monkeypatch, unit="survived", integration="killed")
+
+    result = run._run_tests(Path(), (), ("tests_integration/db.py",))
+
+    assert result["status"] == "killed"
+    assert fake.calls == [(("tests_integration/db.py",), ("-x",))]
+
+
+def test_every_preset_names_files_that_exist() -> None:
+    """A preset whose test file was renamed would score every mutant as caught or none."""
+    for name, preset in PRESETS.items():
+        for rel in (*preset.modules, *preset.tests, *preset.integration_tests):
+            assert (run.BACKEND / rel).is_file(), f"{name}: {rel}"
+        assert all(rel.startswith("tests/") for rel in preset.tests), name
+        assert all(rel.startswith("tests_integration/") for rel in preset.integration_tests), name
+
+
+def test_a_run_that_never_finished_counts_as_caught() -> None:
+    """An endless loop fails every run of the suite; it is not a survivor to judge."""
+    mutants = _mutants()[:3]
+    results = {
+        mutants[0]["id"]: {"id": mutants[0]["id"], "status": "killed"},
+        mutants[1]["id"]: {"id": mutants[1]["id"], "status": "timeout"},
+        mutants[2]["id"]: {"id": mutants[2]["id"], "status": "survived"},
+    }
+
+    judged = [cls for _mutant, cls in classify_run(mutants, results, {})]
+
+    assert judged == ["K", "K", "?"]

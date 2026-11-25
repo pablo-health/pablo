@@ -29,6 +29,35 @@ The calendar preset is about 1,500 mutants and takes about half an hour on
 eight workers. Each worker runs in its own copy of `backend/` under `--out`,
 so the checkout is never modified.
 
+## Tests that need a database
+
+Some code can only be judged against Postgres: what a function does to a
+schema is not visible anywhere else. A preset's `integration_tests` (or
+`--integration-tests`) name files under `tests_integration/` for that.
+
+```bash
+# Needs Docker: each integration run starts its own Postgres container.
+python -m scripts.mutation.run --preset rls-apply --out /tmp/mutation/rls-apply
+```
+
+They run as a second pytest invocation, and only for a mutant the unit tests
+let through:
+
+- The two suites cannot be collected together. Each has its own `conftest.py`,
+  and the integration one refuses the placeholder database the unit one plants.
+- The integration run stops at the first failing test. One is enough to call
+  a mutant caught, and the run is the expensive half. So `results.jsonl` names
+  one killing test for these, not every one.
+- The default is four workers, not eight, because each has a container to
+  itself while its run lasts.
+
+The `rls-apply` preset is 446 mutants and takes about 52 minutes on four
+workers. Most of that is the mutants only the integration tests can catch.
+
+A run that is killed from outside leaves its container behind, since nothing
+reaps them. After stopping a run, check `docker ps` for a stray
+`postgres:16-alpine`.
+
 ## What it changes
 
 One change per mutant, made to the syntax tree: comparisons flipped (`<` to
@@ -44,6 +73,10 @@ Imports, asserts, `TYPE_CHECKING` blocks, `__all__`, docstrings and type
 annotations are left alone.
 
 ## Reading the score
+
+A mutant is caught when a test fails, or when the run never finishes: a
+change that makes a loop endless leaves the tests failing on their own time
+limit until the run's runs out, and no run of the suite passes with it in.
 
 A surviving mutant is not automatically a gap: some changes cannot alter
 behaviour, and some code has no caller. Those judgements are recorded in

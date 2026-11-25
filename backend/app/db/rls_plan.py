@@ -1,6 +1,37 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Compare desired and live row-level security and plan the required DDL."""
+"""Compare a schema's live row-level security with the file's, and plan the DDL.
+
+``rls_apply`` runs what this plans; nothing here touches a schema.
+
+**How a difference is found.** Each live policy is rendered the way ``pg_dump``
+writes one and compared with the file's statement, which ``pg_dump`` also
+wrote. Equal text means the policy is the file's. That catches a policy edited
+by hand (``ALTER POLICY``), which a comment on the policy would not: the
+comment survives the edit.
+
+Equal text is not the only way to be right, though. Postgres does not always
+store a statement in the form it would print it back: applying
+``= ANY ((ARRAY['a'::character varying])::text[])`` stores
+``= ANY (ARRAY[('a'::character varying)::text])``, which means the same and
+reads differently. So a policy created from the file can differ from the file
+as text for ever. When the applier creates a policy and reads back something
+other than what it ran, it records a hash of the two together as the policy's
+comment (``rls-applied-v1-…``). On the next pass that hash matching is the
+second way to be right: this is exactly what the file's statement turned into
+here. An edit by hand changes what is stored, so the hash stops matching.
+
+A server whose deparser differs from the one the template was captured on is
+the same case, and is handled the same way: one rebuild, then the recorded
+hash. So is a policy that names roles, which ``pg_dump`` may list in another
+order.
+
+**What this is not.** It finds drift: a schema older than a policy, a policy
+the file has lost, an edit made by hand. It is not a defence against someone
+who can run DDL on the schema. The hash has no secret in it, so they could
+write a matching comment beside an edit; they could also change a policy the
+moment a pass has finished.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +51,7 @@ if TYPE_CHECKING:
 _QUALIFIER = f"{SCHEMA_PLACEHOLDER}."
 
 #: The comment on a policy whose stored form differs from the statement that
-#: created it; see rls_apply. Versioned like the reconcile's own
+#: created it; see the module docstring. Versioned like the reconcile's own
 #: prefix, so a change to what is hashed invalidates every recorded value.
 APPLIED_PREFIX = "rls-applied-v1-"
 

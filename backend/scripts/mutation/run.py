@@ -14,6 +14,11 @@ the checkout itself is never touched. The first run writes ``mutants.json``;
 resumes where it left off. ``--baseline`` runs the tests once on the modules
 as the harness rewrites them (parsed and unparsed, unmutated): it must pass,
 or every mutant would look killed.
+
+A preset can also name integration tests, which need a Postgres. Those run as
+a second pytest invocation, only for a mutant the unit tests let through, and
+stop at the first failure: one failing test is enough to call a mutant caught,
+and each run starts its own database container.
 """
 
 from __future__ import annotations
@@ -38,11 +43,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 BACKEND = Path(__file__).resolve().parents[2]
-_COPY_IGNORE = shutil.ignore_patterns(
-    "__pycache__", "tests_integration", "evals", ".pytest_cache", "htmlcov"
-)
+_ALWAYS_IGNORED = ("__pycache__", "evals", ".pytest_cache", "htmlcov")
 _PER_TEST_TIMEOUT = 60
 _RUN_TIMEOUT = 240
+# Long enough that pytest's own per-test timeout always ends the run first.
+# Killing an integration run from outside leaves its database container behind.
+_INTEGRATION_RUN_TIMEOUT = 1200
+# Each integration run has a Postgres container to itself while it lasts.
+_INTEGRATION_WORKERS = 4
 _PROGRESS_EVERY = 15
 
 
@@ -151,7 +159,29 @@ def unmutated_source(original: str) -> str:
 # --- running tests ---------------------------------------------------------
 
 
-def _run_tests(worker_backend: Path, tests: tuple[str, ...]) -> dict[str, Any]:
+def _run_tests(
+    worker_backend: Path, tests: tuple[str, ...], integration_tests: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """Run the unit tests, then the integration tests if the unit tests all pass.
+
+    Two invocations because the two suites cannot be collected together. The
+    second is skipped once a unit test has failed: the mutant is caught, and
+    the integration run is the one that costs a database.
+    """
+    unit_elapsed = 0.0
+    if tests:
+        unit = _pytest(worker_backend, tests, _RUN_TIMEOUT)
+        if not integration_tests or unit["status"] != "survived":
+            return unit
+        unit_elapsed = unit["elapsed"]
+    integration = _pytest(worker_backend, integration_tests, _INTEGRATION_RUN_TIMEOUT, "-x")
+    integration["elapsed"] = round(integration["elapsed"] + unit_elapsed, 2)
+    return integration
+
+
+def _pytest(
+    worker_backend: Path, tests: tuple[str, ...], run_timeout: int, *extra: str
+) -> dict[str, Any]:
     command = [
         sys.executable,
         "-m",
@@ -164,6 +194,7 @@ def _run_tests(worker_backend: Path, tests: tuple[str, ...]) -> dict[str, Any]:
         "--no-header",
         "-rfE",
         f"--timeout={_PER_TEST_TIMEOUT}",
+        *extra,
         *tests,
     ]
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
@@ -175,7 +206,7 @@ def _run_tests(worker_backend: Path, tests: tuple[str, ...]) -> dict[str, Any]:
             env=env,
             capture_output=True,
             text=True,
-            timeout=_RUN_TIMEOUT,
+            timeout=run_timeout,
             check=False,
         )
     except subprocess.TimeoutExpired:
@@ -211,10 +242,18 @@ def _run_tests(worker_backend: Path, tests: tuple[str, ...]) -> dict[str, Any]:
 class _Pool:
     """Workers, each with its own copy of backend/, sharing one queue of mutants."""
 
-    def __init__(self, src: Path, out: Path, tests: tuple[str, ...], originals: dict[str, str]):
+    def __init__(
+        self,
+        src: Path,
+        out: Path,
+        tests: tuple[str, ...],
+        originals: dict[str, str],
+        integration_tests: tuple[str, ...] = (),
+    ):
         self.src = src
         self.out = out
         self.tests = tests
+        self.integration_tests = integration_tests
         self.originals = originals
         self.lock = threading.Lock()
         self.queue: queue.Queue[Mutant] = queue.Queue()
@@ -227,7 +266,16 @@ class _Pool:
             backend = self.worker_backend(index)
             if backend.exists():
                 shutil.rmtree(backend)
-            shutil.copytree(self.src, backend, ignore=_COPY_IGNORE)
+            # The integration suite is only worth copying for a run that uses it.
+            ignored = (
+                _ALWAYS_IGNORED
+                if self.integration_tests
+                else (
+                    *_ALWAYS_IGNORED,
+                    "tests_integration",
+                )
+            )
+            shutil.copytree(self.src, backend, ignore=shutil.ignore_patterns(*ignored))
             shutil.copyfile(self.src.parent / "pyproject.toml", backend.parent / "pyproject.toml")
 
     def baseline(self) -> dict[str, Any]:
@@ -235,7 +283,7 @@ class _Pool:
         for rel, original in self.originals.items():
             (backend / rel).write_text(unmutated_source(original))
         try:
-            return _run_tests(backend, self.tests)
+            return _run_tests(backend, self.tests, self.integration_tests)
         finally:
             self._restore(backend)
 
@@ -255,7 +303,10 @@ class _Pool:
         target = backend / mutant["file"]
         target.write_text(source)
         try:
-            return {"id": mutant["id"], **_run_tests(backend, self.tests)}
+            return {
+                "id": mutant["id"],
+                **_run_tests(backend, self.tests, self.integration_tests),
+            }
         finally:
             target.write_text(original)
 
@@ -303,17 +354,32 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--preset", choices=sorted(PRESETS), help="modules and tests to use")
     parser.add_argument("--modules", nargs="*", help="modules to mutate, relative to backend/")
     parser.add_argument("--tests", nargs="*", help="test files to run, relative to backend/")
+    parser.add_argument(
+        "--integration-tests",
+        nargs="*",
+        help="tests_integration/ files, run for a mutant the unit tests let through",
+    )
     parser.add_argument("--out", type=Path, required=True, help="directory for this run")
     parser.add_argument("--src", type=Path, default=BACKEND, help="backend/ to mutate a copy of")
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=f"default 8, or {_INTEGRATION_WORKERS} when there are integration tests",
+    )
     parser.add_argument("--limit", type=int, default=0, help="run at most this many mutants")
     parser.add_argument("--baseline", action="store_true", help="only check the unmutated run")
     args = parser.parse_args(argv)
     preset = PRESETS.get(args.preset) if args.preset else None
     args.modules = tuple(args.modules or (preset.modules if preset else ()))
     args.tests = tuple(args.tests or (preset.tests if preset else ()))
-    if not args.modules or not args.tests:
-        parser.error("name a --preset, or give both --modules and --tests")
+    args.integration_tests = tuple(
+        args.integration_tests or (preset.integration_tests if preset else ())
+    )
+    if not args.modules or not (args.tests or args.integration_tests):
+        parser.error("name a --preset, or give --modules and some tests")
+    if args.workers is None:
+        args.workers = _INTEGRATION_WORKERS if args.integration_tests else 8
     return args
 
 
@@ -331,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
         mutants_path.write_text(json.dumps(mutants, indent=0))
     originals = {rel: (src / rel).read_text() for rel in {m["file"] for m in mutants}}
 
-    pool = _Pool(src, out, args.tests, originals)
+    pool = _Pool(src, out, args.tests, originals, args.integration_tests)
     workers = 1 if args.baseline else args.workers
     pool.prepare(workers)
     baseline = pool.baseline()
