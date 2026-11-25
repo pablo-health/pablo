@@ -54,6 +54,7 @@ _TYPE_ID = "66666666-6666-4666-8666-666666666666"
 _EASTERN = ZoneInfo("America/New_York")
 _COLLEAGUE_ID = "77777777-7777-4777-8777-777777777777"
 _COLLEAGUE_APPOINTMENT_ID = "88888888-8888-4888-8888-888888888888"
+_COLLEAGUE_TYPE_ID = "99999999-9999-4999-8999-999999999999"
 
 # 01:30 UTC on the 2nd is the evening of the 1st in New York.
 _START_UTC = datetime(2026, 9, 2, 1, 30, tzinfo=UTC)
@@ -440,8 +441,15 @@ def _colleagues_session(sources: ClaimSources) -> None:
     """A session the colleague held with the same client, visible to both clinicians."""
     sources.appointments.grant_access(PATIENT_ID, _COLLEAGUE_ID)
     sources.patients.grant_access(PATIENT_ID, _COLLEAGUE_ID)
+    sources.appointment_types.create(
+        _appointment_type(id=_COLLEAGUE_TYPE_ID, user_id=_COLLEAGUE_ID, default_fee_cents=17500)
+    )
     sources.appointments.create(
-        _appointment(id=_COLLEAGUE_APPOINTMENT_ID, user_id=_COLLEAGUE_ID, appointment_type_id=None)
+        _appointment(
+            id=_COLLEAGUE_APPOINTMENT_ID,
+            user_id=_COLLEAGUE_ID,
+            appointment_type_id=_COLLEAGUE_TYPE_ID,
+        )
     )
 
 
@@ -463,6 +471,8 @@ def test_the_sessions_clinician_renders_whoever_builds_the_claim(sources: ClaimS
             "Ruiz",
         )
         assert billing.billing_provider.npi == "1234567893"
+        # The fee comes from the colleague's own appointment type, not the builder's.
+        assert [line.charge_cents for line in claim.lines] == [17500]
     assert by_colleague.billing_snapshot == by_grant_holder.billing_snapshot
 
 

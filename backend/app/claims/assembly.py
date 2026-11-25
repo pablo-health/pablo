@@ -65,6 +65,9 @@ if TYPE_CHECKING:
 class ClaimBuildError(Exception):
     """The claim cannot be built from what is on file."""
 
+    #: What a route tells the clinician when it refuses the build with a 422.
+    detail = "The claim cannot be built from what is on file."
+
 
 class AppointmentNotFoundError(ClaimBuildError):
     """No such appointment, or not one this clinician can see."""
@@ -77,13 +80,19 @@ class ClientNotFoundError(ClaimBuildError):
 class NoActiveCoverageError(ClaimBuildError):
     """The client has no active coverage on file to build the claim against."""
 
+    detail = "The client has no active coverage on file."
+
 
 class RenderingClinicianNotFoundError(ClaimBuildError):
     """The clinician who held the session has no user record."""
 
+    detail = "The clinician who held this session is no longer on file."
+
 
 class PayerNotFoundError(ClaimBuildError):
     """The coverage names a payer that is no longer on the practice's list."""
+
+    detail = "The client's coverage names a payer that is no longer on file."
 
 
 #: Crockford's base32 alphabet: digits and upper-case letters with the four
