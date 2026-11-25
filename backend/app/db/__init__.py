@@ -142,7 +142,7 @@ _PRINCIPAL_SETTINGS = ("app.current_user_id", "app.current_patient_id")
 _JOB_ONLY_SETTINGS = ("app.allow_audit_purge", "app.allow_patient_purge")
 
 # The provisioning TEMPLATE schema. Every practice schema is built from
-# this one; no practice's data ever lives in it. ``enable_rls_on_schema``
+# this one; no practice's data ever lives in it. ``infer_rls_on_schema``
 # skips it deliberately, which is only safe because it holds no rows —
 # see ``DEFAULT_PRACTICE_ID`` below.
 DEFAULT_PRACTICE_SCHEMA = "practice"
@@ -1478,7 +1478,7 @@ def create_standalone_session(practice_schema: str | None = None) -> Session:
 # Tenant tables that a deployment knows are NOT row-scoped — their
 # isolation boundary is the tenant schema (search_path), not a per-row
 # predicate — but that carry an ``id`` column and so would otherwise be
-# rejected by ``enable_rls_on_schema``'s deny-all guard. Core ships none;
+# rejected by ``infer_rls_on_schema``'s deny-all guard. Core ships none;
 # a deployment that adds its own non-row-scoped tenant tables registers
 # them here (see ``register_overlay_not_row_scoped``) so the guard treats
 # them exactly like core's own entries (``_CORE_NOT_ROW_SCOPED``).
@@ -1597,7 +1597,7 @@ def not_row_scoped_tenant_tables() -> set[str]:
     them would leave a table with no policy — a silent deny-all under a
     NOBYPASSRLS role.
 
-    Exposed as an accessor so that ``enable_rls_on_schema`` (which acts on
+    Exposed as an accessor so that ``infer_rls_on_schema`` (which acts on
     the set) and ``rls_forced_tenant_tables`` (which reports the complement)
     read the same answer, and so anything checking the invariant from
     outside can ask rather than re-derive.
@@ -1608,7 +1608,7 @@ def not_row_scoped_tenant_tables() -> set[str]:
 def register_overlay_not_row_scoped(*table_names: str) -> None:
     """Register additional tenant tables as not-row-scoped.
 
-    ``enable_rls_on_schema`` force-enables row-level security on every
+    ``infer_rls_on_schema`` force-enables row-level security on every
     tenant table carrying a ``user_id`` / ``patient_id`` / ``id`` column
     and refuses (raises) to leave such a table with no policy, since that
     would be a silent deny-all. A deployment that introduces its own
@@ -1627,7 +1627,7 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 
 # Tenant tables a deployment added whose rows each belong to one user, named
 # by a column other than ``user_id`` (``owner_user_id``, ``clinician_id``,
-# ...). The column query in ``enable_rls_on_schema`` keys on ``id`` /
+# ...). The column query in ``infer_rls_on_schema`` keys on ``id`` /
 # ``user_id`` / ``patient_id``, and the direct-ownership shape keys on
 # ``user_id`` alone, so without this registry such a table could only be
 # registered not-row-scoped: users of one practice would then be kept apart
@@ -1646,7 +1646,7 @@ def register_overlay_owner_scoped(
 ) -> None:
     """Register a tenant table whose rows each belong to the user in ``owner_column``.
 
-    ``enable_rls_on_schema`` then enables and forces row-level security on the
+    ``infer_rls_on_schema`` then enables and forces row-level security on the
     table and gives it one policy, ``rls_owner_isolation``, for every command:
     a row is visible and writable when ``owner_column`` (cast to text) equals
     the armed ``app.current_user_id``. The cast is on the column, never the
@@ -1667,7 +1667,7 @@ def register_overlay_owner_scoped(
     registered table is planned whatever its columns. Registration happens at
     bootstrap, like the other two seams. A registered table that lacks
     ``owner_column``, or that is also registered not-row-scoped, makes
-    ``enable_rls_on_schema`` raise rather than ship a policy that matches
+    ``infer_rls_on_schema`` raise rather than ship a policy that matches
     nothing or a registration that cannot take effect. The policy is
     fingerprinted like every other, so one dropped or altered by hand is
     rebuilt on the next reconcile, and one left on a table that is no longer
@@ -1687,7 +1687,7 @@ def register_overlay_owner_scoped(
 # itself through ``register_overlay_patient_scoped`` in its own change.
 #
 # IMPORTANT — where these policies do and do not apply. RLS is applied
-# per tenant schema, and ``enable_rls_on_schema`` deliberately returns
+# per tenant schema, and ``infer_rls_on_schema`` deliberately returns
 # early for ``DEFAULT_PRACTICE_SCHEMA`` — which is now only ever the
 # provisioning template. Every deployment runs a real ``practice_*``
 # schema (PABLO-2g6), so these policies are live everywhere and
@@ -1938,7 +1938,7 @@ def register_overlay_patient_scoped(
 ) -> None:
     """Register a tenant table as reachable by the patient principal.
 
-    ``enable_rls_on_schema`` adds an **additive** patient policy to every
+    ``infer_rls_on_schema`` adds an **additive** patient policy to every
     registered table: Postgres permissive policies OR together, so the
     patient arm widens access for a patient principal without altering —
     or even touching the text of — the clinician policy beside it.
@@ -1953,7 +1953,7 @@ def register_overlay_patient_scoped(
 
     Registration is a deployment-level statement about the product, so it
     happens at bootstrap, not per-request. A registered table missing
-    ``key_column`` makes ``enable_rls_on_schema`` raise rather than ship a
+    ``key_column`` makes ``infer_rls_on_schema`` raise rather than ship a
     policy that silently matches nothing.
     """
     PATIENT_READABLE_TABLES[table_name] = key_column
@@ -1962,7 +1962,7 @@ def register_overlay_patient_scoped(
 
 
 class RlsReconcileCounts(NamedTuple):
-    """What one ``enable_rls_on_schema`` pass did to a schema.
+    """What one ``infer_rls_on_schema`` pass did to a schema.
 
     ``applied`` is the tables whose row-level security state it verified or
     set; ``skipped`` the ones it deliberately passed over (see the ``strict``
@@ -1987,7 +1987,7 @@ def engine_known_tenant_tables() -> set[str]:
     that appears in none of them was put there by a layer above the
     engine, after provisioning, and the engine has no way to know what
     its isolation boundary is supposed to be — so it is not the engine's
-    to police. See ``enable_rls_on_schema``'s ``strict`` argument.
+    to police. See ``infer_rls_on_schema``'s ``strict`` argument.
     """
     from .models import Base  # lazy import — avoid circular import
 
@@ -2030,10 +2030,37 @@ def _patient_principal_policy_statements(
     )
 
 
-def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registration guard
+def enable_rls_on_schema(
+    session: Session,  # noqa: ARG001 — the signature landed revisions call
+    schema_name: str,
+    *,
+    strict: bool = True,  # noqa: ARG001
+) -> RlsReconcileCounts:
+    """Does nothing. Kept because landed revisions call it.
+
+    Row-level security on a live practice schema is set in one place,
+    ``rls_runtime.apply_practice_rls``, which makes the schema match the
+    tenant templates. A landed revision is never edited, and doing nothing
+    where one calls this mid-chain is correct: head's policies can name
+    columns that do not exist yet at that point, and the pass after the chain
+    (``migrate_tenants.reconcile_tenant_rls``) puts every policy in place.
+
+    Deciding policies from a schema's columns is the template regen's job:
+    see :func:`infer_rls_on_schema`.
+    """
+    _validate_schema_name(schema_name)
+    return RlsReconcileCounts(applied=0, skipped=0, altered=0)
+
+
+def infer_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registration guard
     session: Session, schema_name: str, *, strict: bool = True
 ) -> RlsReconcileCounts:
-    """Enable Row-Level Security on every patient-scoped table in the schema.
+    """Give a schema the row-level security its columns and registrations imply.
+
+    **Only the tenant template regen calls this.** It runs over a scratch
+    practice, and what it creates there is captured into the template's
+    row-level security section, which is what every live practice is then
+    made to match (``rls_runtime``). Nothing at run time infers a policy.
 
     Two policy shapes, picked by what columns the table has:
 
@@ -2272,7 +2299,7 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
                 f"cannot be created"
             )
             if strict:
-                raise RuntimeError(f"enable_rls_on_schema: {message}")
+                raise RuntimeError(f"infer_rls_on_schema: {message}")
             logger.warning("rls reconcile: skipped %s", message)
             skipped.add(table_name)
             continue
@@ -2305,7 +2332,7 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
     _refuse_owner_and_not_row_scoped(set(owner_scoped), not_row_scoped)
     if ungranted or unreachable:
         raise RuntimeError(
-            f"enable_rls_on_schema: patient-scoped registrations got no policy in "
+            f"infer_rls_on_schema: patient-scoped registrations got no policy in "
             f"{schema_name} — skipped={sorted(ungranted)}, "
             f"registered-but-not-row-scoped={sorted(unreachable)}. A table listed in "
             f"PATIENT_READABLE_TABLES must be row-scoped and must carry one of the "
@@ -2348,7 +2375,7 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
 
 
 def rls_forced_tenant_tables() -> set[str]:
-    """Return every tenant table that enable_rls_on_schema force-enables RLS on.
+    """Return every tenant table that infer_rls_on_schema force-enables RLS on.
 
     Mirrors that function's selection: a table is RLS-forced if it carries any
     of user_id / patient_id / id (the columns the provisioning query keys on),
@@ -2356,7 +2383,7 @@ def rls_forced_tenant_tables() -> set[str]:
     ``not_row_scoped_tenant_tables``) whose isolation boundary is the schema, not
     a per-row policy. Derived from the ORM so a new RLS-bearing table — whether
     patient-access, user-owned, or special-cased — is covered automatically,
-    with no hand-maintained list. MUST stay consistent with enable_rls_on_schema.
+    with no hand-maintained list. MUST stay consistent with infer_rls_on_schema.
     """
     from .models import Base  # lazy import — avoid circular import
 

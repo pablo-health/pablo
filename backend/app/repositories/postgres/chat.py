@@ -16,7 +16,7 @@ The join through :class:`PatientClinicianRow` happens in the same SQL
 statement as the read where possible — same idiom as
 :class:`PostgresNotesRepository.get` so the DB can short-circuit on
 ``EXISTS``. The Postgres RLS policy on ``chat_conversations`` provides
-a defense-in-depth gate (installed by ``enable_rls_on_schema`` on the
+a defense-in-depth gate (installed by ``infer_rls_on_schema`` on the
 next bootstrap pass; see migration ``3f8d1a6c2b04``).
 """
 

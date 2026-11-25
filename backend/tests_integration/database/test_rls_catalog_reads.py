@@ -116,7 +116,9 @@ def practice(engine: Engine) -> Iterator[str]:
     Also a sibling schema holding tables of the same names, which must not
     leak into the practice's reads.
     """
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from tests_integration.database.planner_practice import (  # noqa: PLC0415
+        build_planner_practice,
+    )
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -124,7 +126,7 @@ def practice(engine: Engine) -> Iterator[str]:
     suffix = uuid.uuid4().hex[:8]
     schema = f"practice_test_catalog_{suffix}"
     sibling = f"catalog_sibling_{suffix}"
-    create_practice_schema(engine, schema)
+    build_planner_practice(engine, schema)
     statements = [
         f"CREATE SCHEMA {sibling}",
         f"CREATE TABLE {sibling}.zz_text (id int, patient_id varchar(40), only_in_sibling text)",
@@ -185,9 +187,18 @@ def test_the_reads_return_what_the_whole_catalog_reads_returned(
 def test_the_reconcile_reads_through_the_scoped_readers(
     engine: Engine, practice: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A future edit that inlines a whole-catalog read again would go unseen above."""
+    """A future edit that inlines a whole-catalog read again would go unseen above.
+
+    The planner, as the template regen runs it over a schema.
+    """
     from app import db  # noqa: PLC0415
-    from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
+
+    def reconcile_tenant_rls(engine: Engine, schema: str) -> Any:
+        with Session(engine) as session:
+            session.execute(text(f"SET search_path = {schema}, {db.PLATFORM_SCHEMA}, public"))
+            counts = db.infer_rls_on_schema(session, schema, strict=False)
+            session.commit()
+            return counts
 
     calls: list[tuple[str, str]] = []
 

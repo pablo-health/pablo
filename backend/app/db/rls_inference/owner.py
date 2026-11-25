@@ -29,14 +29,14 @@ _USER_ARMED = "coalesce(current_setting('app.current_user_id', true), '') <> ''"
 def _refuse_owner_and_not_row_scoped(owner_scoped: set[str], not_row_scoped: set[str]) -> None:
     """Raise for a table registered both owner-scoped and not-row-scoped.
 
-    The not-row-scoped branch wins in ``enable_rls_on_schema``'s loop, so the
+    The not-row-scoped branch wins in ``infer_rls_on_schema``'s loop, so the
     owner policy the deployment asked for would never be created. A table is
     one or the other, and which registration is wrong is not ours to guess.
     """
     both = owner_scoped & not_row_scoped
     if both:
         raise RuntimeError(
-            f"enable_rls_on_schema: {sorted(both)} registered both owner-scoped and "
+            f"infer_rls_on_schema: {sorted(both)} registered both owner-scoped and "
             f"not-row-scoped. A table is one or the other — refusing to guess which "
             f"registration is wrong."
         )

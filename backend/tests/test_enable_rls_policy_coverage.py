@@ -1,4 +1,4 @@
-"""Policy-coverage guards for ``enable_rls_on_schema``.
+"""Policy-coverage guards for ``infer_rls_on_schema``.
 
 These exercise the per-table policy decision without a real Postgres by
 driving the function with a fake session that records the DDL it would
@@ -15,7 +15,7 @@ ehr_routes, users) would have tripped.
 Two additional guards (L3 — runs in ``make test``, no DB required):
 
 * ``test_every_real_tenant_table_is_classified`` — iterates every table
-  in the real ORM metadata and asserts ``enable_rls_on_schema`` does NOT
+  in the real ORM metadata and asserts ``infer_rls_on_schema`` does NOT
   raise.  Catches a newly-added tenant table that has no policy branch
   before it reaches the real-Postgres integration suite.
 
@@ -36,7 +36,7 @@ import pytest
 from app.db import (
     PATIENT_READABLE_TABLES,
     PATIENT_WRITABLE_TABLES,
-    enable_rls_on_schema,
+    infer_rls_on_schema,
     rls_forced_tenant_tables,
 )
 from app.db.models import Base
@@ -99,7 +99,7 @@ def _run(
     strict: bool = True,
 ) -> _FakeSession:
     session = _FakeSession(columns_by_table, types_by_table)
-    enable_rls_on_schema(session, "practice_test", strict=strict)  # type: ignore[arg-type]
+    infer_rls_on_schema(session, "practice_test", strict=strict)  # type: ignore[arg-type]
     return session
 
 
@@ -307,7 +307,7 @@ EXEMPT_RLS_FORCED_TABLES: frozenset[str] = frozenset()
 
 
 def _columns_for_rls(table: object) -> set[str]:
-    """Return the columns ``enable_rls_on_schema`` needs to see for this table.
+    """Return the columns ``infer_rls_on_schema`` needs to see for this table.
 
     The clinician policy branches switch on ``{user_id, patient_id, id}``,
     so those are what decide the *shape*. But the patient arm additionally
@@ -338,12 +338,12 @@ def _columns_for_rls(table: object) -> set[str]:
 def test_every_real_tenant_table_is_classified() -> None:
     """Every ORM table must map to a policy branch, not the deny-all guard.
 
-    Drives ``enable_rls_on_schema`` via _FakeSession seeded with each
+    Drives ``infer_rls_on_schema`` via _FakeSession seeded with each
     table's REAL columns (intersected to {user_id, patient_id, id} as the
     function queries).  Asserts no RuntimeError is raised.
 
     On failure: the error message names the offending table.  Fix by adding
-    a policy branch in ``enable_rls_on_schema`` OR listing it in
+    a policy branch in ``infer_rls_on_schema`` OR listing it in
     ``not_row_scoped`` / ``register_overlay_not_row_scoped`` if it is not
     row-owned.
     """
@@ -356,9 +356,9 @@ def test_every_real_tenant_table_is_classified() -> None:
             continue
         try:
             session = _FakeSession({table_name: cols})
-            enable_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
+            infer_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
         except RuntimeError as exc:
-            # Carry the real message. ``enable_rls_on_schema`` raises
+            # Carry the real message. ``infer_rls_on_schema`` raises
             # RuntimeError for more than one reason — no policy branch, but
             # also a patient registration naming a column the table does not
             # have — and reporting every one as "no policy defined" sends the
@@ -366,9 +366,9 @@ def test_every_real_tenant_table_is_classified() -> None:
             unclassified.append(f"{table_name} ({exc})")
 
     assert not unclassified, (
-        f"enable_rls_on_schema has no RLS policy defined for: {unclassified}. "
+        f"infer_rls_on_schema has no RLS policy defined for: {unclassified}. "
         "These tables would be force-RLS'd with no policy — a silent deny-all. "
-        "Fix: add a policy branch in enable_rls_on_schema (backend/app/db/__init__.py) "
+        "Fix: add a policy branch in infer_rls_on_schema (backend/app/db/__init__.py) "
         "OR call register_overlay_not_row_scoped() for tables whose isolation boundary "
         "is the tenant schema, not a per-row predicate. "
         "See CLAUDE.md guardrail #4."
@@ -431,7 +431,7 @@ def test_rls_forced_tables_are_covered_by_rls_invariants() -> None:
 def test_patient_scoped_registry_names_real_tables_with_their_key_column() -> None:
     """Every patient-scoped registration must match a real table and column.
 
-    ``enable_rls_on_schema`` raises when a registered table lacks its key
+    ``infer_rls_on_schema`` raises when a registered table lacks its key
     column, which is the right runtime behaviour but only fires during
     provisioning. This catches the same mistake at unit-test speed, and
     catches the other direction too: a table renamed or dropped out from
@@ -451,7 +451,7 @@ def test_patient_scoped_registry_names_real_tables_with_their_key_column() -> No
     assert not problems, (
         "PATIENT_READABLE_TABLES is out of sync with the schema: "
         f"{problems}. A registration whose key column is missing would make "
-        "enable_rls_on_schema raise during tenant provisioning."
+        "infer_rls_on_schema raise during tenant provisioning."
     )
 
 
@@ -475,7 +475,7 @@ def test_patients_is_registered_on_its_own_id_both_ways() -> None:
     ``patients`` is the one registered table where the patient IS the row,
     so both arms key on ``id`` rather than on ``patient_id``. A registration
     that drifted to ``patient_id`` would name a column the table does not
-    have, and ``enable_rls_on_schema`` would refuse to provision rather than
+    have, and ``infer_rls_on_schema`` would refuse to provision rather than
     ship a policy matching nothing — loud, but a long way from here.
 
     The write arm arrived with the portal profile screen (revision

@@ -18,8 +18,13 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from app.db import PLATFORM_SCHEMA, enable_rls_on_schema
-from app.db.migrate_tenants import TenantStatus, _alembic_config_for, upgrade_tenant_schema
+from app.db import PLATFORM_SCHEMA
+from app.db.migrate_tenants import (
+    TenantStatus,
+    _alembic_config_for,
+    reconcile_tenant_rls,
+    upgrade_tenant_schema,
+)
 from app.db.provisioning import _ALEMBIC_INI_PATH, create_practice_schema, ensure_schemas
 from app.repositories.postgres.patient_message import PostgresPatientMessageRepository
 from sqlalchemy import create_engine, text
@@ -170,10 +175,7 @@ def test_a_read_thread_stays_read_for_every_clinician_with_access(
 
     result = upgrade_tenant_schema(engine, schema)
     assert result.status is TenantStatus.SUCCESS, result.detail
-    with Session(engine) as session:  # the reconcile the migrate job runs after the chain
-        session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-        enable_rls_on_schema(session, schema)
-        session.commit()
+    reconcile_tenant_rls(engine, schema)  # the pass the migrate job runs after the chain
 
     assert _markers(engine, schema) == {
         (threads["read"], _PRIMARY, _READ_AT),

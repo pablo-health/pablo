@@ -3,7 +3,7 @@
 """Move a pre-provisioning deployment onto a real practice schema (PABLO-2g6.1's parent).
 
 Boot used to register the live practice against ``practice`` — the schema that
-is also the provisioning template, and the one ``enable_rls_on_schema`` returns
+is also the provisioning template, and the one ``infer_rls_on_schema`` returns
 early on. So the schema holding real charts ran with no row policies at all.
 Boot now provisions ``practice_default`` and registers that instead, but a
 deployment that already exists is deliberately left alone and only warned about,
@@ -25,10 +25,10 @@ once policies apply, and the migration refuses to run unless every count is
 zero.
 
 **Staying honest about what the policies are.** The predicates below mirror the
-branches in ``enable_rls_on_schema``. A copy can drift from its original, and a
+branches in ``infer_rls_on_schema``. A copy can drift from its original, and a
 drifted copy here is worse than none: it would report zero invisible rows for a
 shape it no longer understands. Two things guard that. ``_classify`` raises on
-any table it does not recognise, exactly as ``enable_rls_on_schema`` raises
+any table it does not recognise, exactly as ``infer_rls_on_schema`` raises
 rather than leave a table deny-all. And ``tests_integration/database/single_practice_migration/``
 applies the REAL policies to a provisioned schema, reads ``pg_policies`` back,
 and asserts the classification here matches the policy actually created — so a
@@ -51,7 +51,6 @@ from . import (
     NOTE_CHILD_TABLES,
     PLATFORM_SCHEMA,
     _validate_schema_name,
-    enable_rls_on_schema,
     not_row_scoped_tenant_tables,
 )
 
@@ -75,7 +74,7 @@ _LIVE_GRANT = (
 
 
 class Shape(Enum):
-    """Which ``enable_rls_on_schema`` branch a table takes."""
+    """Which ``infer_rls_on_schema`` branch a table takes."""
 
     USER_ID = "user_id"
     #: Same orphan predicate as USER_ID — reads are gated on ``user_id`` — but a
@@ -118,7 +117,7 @@ class PreflightError(RuntimeError):
     """The pre-flight found rows that would become invisible. Nothing was changed."""
 
 
-#: Ordered exactly as ``enable_rls_on_schema``'s if/elif chain. Order is the
+#: Ordered exactly as ``infer_rls_on_schema``'s if/elif chain. Order is the
 #: whole content: ``audit_logs`` and ``patient_clinicians`` both carry
 #: ``user_id`` and would be swallowed by the generic rule if they came after it.
 _CLASSIFY_RULES: list[tuple[str, Shape]] = [
@@ -142,7 +141,7 @@ _CLASSIFY_FALLBACK_RULES: list[tuple[str, Shape]] = [
 
 
 def _classify(table_name: str, columns: set[str]) -> Shape:
-    """Which policy shape ``enable_rls_on_schema`` would give this table."""
+    """Which policy shape ``infer_rls_on_schema`` would give this table."""
     for name, shape in _CLASSIFY_RULES:
         if table_name == name:
             return shape
@@ -165,7 +164,7 @@ def _classify(table_name: str, columns: set[str]) -> Shape:
             return shape
     raise RuntimeError(
         f"single-practice pre-flight: no known RLS policy shape for '{table_name}' "
-        f"(columns present: {sorted(columns)}). enable_rls_on_schema would raise on "
+        f"(columns present: {sorted(columns)}). infer_rls_on_schema would raise on "
         f"this table too — add the branch in both places, or register the table as "
         f"not-row-scoped. Refusing to report it as safe."
     )
@@ -522,16 +521,17 @@ def migrate(engine: Engine, *, force: bool = False) -> list[OrphanCount]:
     from sqlalchemy.orm import Session
 
     with Session(engine) as session:
-        # ``has_patient_access`` is a schema-local function: the policies below
-        # call it unqualified, so it has to be on the search_path. It moved with
-        # the rename — the renamed schema carries its own copy — so the path
-        # names the NEW schema. Pointing at the rebuilt template instead would
-        # resolve to a different function object with the same body, which works
-        # right up until the two definitions diverge.
+        # The renamed schema first on the path, for the directory access below:
+        # ``has_patient_access`` is schema-local and moved with the rename, so
+        # anything resolving it unqualified must reach that schema's own copy,
+        # not the rebuilt template's, which has the same body until the day the
+        # two diverge. The row-level security pass names everything in full.
         session.execute(
             text(f"SET search_path = {DEFAULT_PRACTICE_OWN_SCHEMA}, {PLATFORM_SCHEMA}, public")
         )
-        enable_rls_on_schema(session, DEFAULT_PRACTICE_OWN_SCHEMA)
+        from .rls_runtime import apply_practice_rls
+
+        apply_practice_rls(session, DEFAULT_PRACTICE_OWN_SCHEMA, strict=True)
         # The rename carried the directory functions with it, each with a
         # search path that still names the old schema, and the template schema
         # they came from never had the directory role's grants or policies.

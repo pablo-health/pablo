@@ -164,7 +164,7 @@ def _patient_principal_policy_statements(
 
     if key_column not in columns:
         raise RuntimeError(
-            f"enable_rls_on_schema: {qualified} is registered patient-scoped on "
+            f"infer_rls_on_schema: {qualified} is registered patient-scoped on "
             f"'{key_column}', but that column is not present (columns found: "
             f"{sorted(columns)}). Refusing to create a policy that would match "
             f"nothing — fix the registration or the table."

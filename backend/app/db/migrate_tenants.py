@@ -20,18 +20,15 @@ reconciling tables — for tenants provisioned before a new model table
 while alembic believed it was caught up, masking real failures and making
 future ``upgrade head`` calls a no-op against the broken state.
 
-The fan-out also re-applies row-level security to every schema it visits
-(:func:`reconcile_tenant_rls`). A revision creates tables; it does not
-create policies, and ``enable_rls_on_schema`` used to run only when a
-schema was provisioned. So a practice that already existed when a
-revision landed got the new table with no row policy at all, and a table
-whose registration changed kept the policy set it was born with — while
-a practice provisioned the next day was correct, because the template
-captures the policies. Reconciling here closes that gap without an
-operator step: it is idempotent, it runs even when the schema was
-already at head (a registration can change with no revision beside it),
-and a schema whose reconcile fails is reported FAILED rather than
-silently shipping a table that is unprotected or deny-all.
+The fan-out also makes every schema it visits match the row-level security
+the tenant templates carry (:func:`reconcile_tenant_rls`). A revision
+creates tables; it does not set their policies. So this pass is what gives
+a practice that already existed when a revision landed the policies a
+practice provisioned that day gets from the template. It is idempotent, it
+runs even when the schema was already at head (a template's policies can
+change with no revision beside it), and a schema whose pass fails is
+reported FAILED rather than silently shipping a table that is unprotected
+or deny-all.
 """
 
 from __future__ import annotations
@@ -55,10 +52,8 @@ from . import (
     PLATFORM_SCHEMA,
     RlsReconcileCounts,
     _validate_schema_name,
-    enable_rls_on_schema,
 )
 from .platform_models import SCHEMA_READY
-from .practice_directory import apply_practice_directory_access
 from .provisioning import _ALEMBIC_INI_PATH
 
 if TYPE_CHECKING:
@@ -116,36 +111,24 @@ class _RlsReconciler(Protocol):
 
 
 def reconcile_tenant_rls(engine: Engine, schema: str) -> RlsReconcileCounts:
-    """Re-apply row-level security to one live tenant schema.
+    """Make one live tenant schema's row-level security match the templates.
 
-    Runs ``enable_rls_on_schema`` on its own session, with the tenant
-    schema on the search path so the policy bodies referencing
-    ``has_patient_access`` resolve — the same posture provisioning uses.
+    Runs after the chain has brought the schema to head, on its own session
+    (``rls_runtime.apply_practice_rls``). Revisions do not set row-level
+    security themselves: head's policies can name columns that do not exist
+    yet partway up the chain, so the policies are put in place once, here.
 
-    ``strict=False``, which is the whole difference between this path and
-    provisioning. A live practice schema holds tables the engine never
-    created: a deployment layered on top adds its own after provisioning,
-    and they are absent from the ORM and from both registration seams. The
-    engine cannot know what isolates them, so it leaves them alone and says
-    so, rather than guessing a policy or failing the practice over a table
-    that is not its own. Its own tables are still policed strictly.
+    Lenient about tables no template creates: a live practice schema can hold
+    tables added some other way, and those are left as they are and named in a
+    warning, rather than failing the practice over a table that is not the
+    templates' to decide.
 
-    Raises whatever the reconcile raises; the fan-out turns that into a
-    FAILED tenant.
+    Raises whatever the pass raises; the fan-out turns that into a FAILED tenant.
     """
-    _validate_schema_name(schema)
+    from .rls_runtime import apply_practice_rls
+
     with Session(engine) as session:
-        # Operator job: schema validated by _validate_schema_name(); not web-reachable.
-        # nosemgrep
-        session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-        counts = enable_rls_on_schema(session, schema, strict=False)
-        # The practice directory's access, re-applied here as it always was on
-        # this pass: the reconcile above does not manage the directory's read
-        # policy, so a practice that lost it would otherwise keep going without
-        # it. Provisioning no longer needs this (the template carries the
-        # access); this call goes when the pass applies the template's policies
-        # directly, which puts that policy back like any other.
-        apply_practice_directory_access(session, schema)
+        counts = apply_practice_rls(session, schema, strict=False)
         session.commit()
         return counts
 

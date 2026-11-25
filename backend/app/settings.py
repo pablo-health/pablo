@@ -659,6 +659,25 @@ class Settings(BaseSettings):
         default="",
         description=("PostgreSQL connection URL. Format: postgresql://user:pass@host:port/dbname"),
     )
+    tenant_rls_extra_templates_raw: str = Field(
+        default="",
+        alias="TENANT_RLS_EXTRA_TEMPLATES",
+        description=(
+            "Comma-separated paths of tenant templates beyond the engine's own, for a "
+            "deployment that adds practice-schema tables. Each has the engine template's "
+            "shape: the schema, the row-level security marker, then that template's "
+            "row-level security. Every process that applies row-level security (the "
+            "migrate step, provisioning, archive restore) reads the same list, so set it "
+            "where the template files ship, e.g. in the container image. Empty (default): "
+            "the engine's template only. Configure per-deployment."
+        ),
+    )
+
+    @property
+    def tenant_rls_extra_templates(self) -> tuple[str, ...]:
+        """Parse comma-separated TENANT_RLS_EXTRA_TEMPLATES into paths, in order."""
+        return tuple(p.strip() for p in self.tenant_rls_extra_templates_raw.split(",") if p.strip())
+
     database_pool_size: int = Field(
         default=5,
         description=(

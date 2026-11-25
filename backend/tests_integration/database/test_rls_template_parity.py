@@ -87,9 +87,22 @@ def _provision(engine: Engine, label: str) -> str:
 
 
 def _reconcile(engine: Engine, schema: str) -> Any:
+    """The run-time pass over a live practice: make it match the templates."""
     from app.db.provisioning import reconcile_practice_rls  # noqa: PLC0415
 
     return reconcile_practice_rls(engine, schema)
+
+
+def _infer(engine: Engine, schema: str) -> Any:
+    """The planner the template is captured from, as the regen runs it."""
+    from app.db import PLATFORM_SCHEMA, infer_rls_on_schema  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    with OrmSession(engine) as session:
+        session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        counts = infer_rls_on_schema(session, schema)
+        session.commit()
+        return counts
 
 
 def _state(engine: Engine, schema: str) -> tuple[set[tuple[Any, ...]], set[tuple[Any, ...]]]:
@@ -135,7 +148,7 @@ def rebuilt(engine: Engine) -> Iterator[tuple[str, Any]]:
     schema = _new_schema("rls_rebuilt")
     _apply_tenant_template(engine, schema)
     _stamp_alembic_at_head(engine, schema)
-    counts = _reconcile(engine, schema)
+    counts = _infer(engine, schema)
     with engine.begin() as conn:
         apply_practice_directory_access(conn, schema)
     yield schema, counts
@@ -156,19 +169,34 @@ def test_the_verify_alters_nothing_on_a_template_built_schema(
     counts = _reconcile(engine, provisioned)
     assert counts.applied > 0
     assert counts.altered == 0, (
-        "the template and enable_rls_on_schema disagree on "
-        f"{counts.altered} table(s); regenerate tenant_template.sql"
+        "a practice provisioned from the template had "
+        f"{counts.altered} table(s) changed on its next pass"
     )
 
 
 def test_the_template_carries_what_a_full_rebuild_produces(
     engine: Engine, provisioned: str, rebuilt: tuple[str, Any]
 ) -> None:
+    """A practice built from the template and one the planner built match, as the pass sees them.
+
+    Same flags and the same policies on every table, and the run-time pass
+    finds nothing to change on either. Policy text is not compared as stored:
+    for a few statements Postgres stores what the template's text creates in a
+    different, equivalent form than what the planner's text creates, and the
+    pass recognises both (see ``rls_apply``, "How a difference is found").
+    """
+    from app.db.rls_apply import tenant_rls_differences  # noqa: PLC0415
+    from app.db.rls_runtime import desired_rls  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
     rebuilt_schema, counts = rebuilt
     template_flags, template_policies = _state(engine, provisioned)
     rebuilt_flags, rebuilt_policies = _state(engine, rebuilt_schema)
     assert template_flags == rebuilt_flags
-    assert template_policies == rebuilt_policies
+    assert {p[:2] for p in template_policies} == {p[:2] for p in rebuilt_policies}
+    with OrmSession(engine) as session:
+        for schema in (provisioned, rebuilt_schema):
+            assert tenant_rls_differences(session, schema, desired_rls()) == {}, schema
 
     # Built without the template's row-level security, so the pass had to
     # set every row-scoped table; the not-row-scoped ones already had RLS
@@ -254,3 +282,23 @@ def test_the_verify_runs_a_handful_of_statements(engine: Engine, provisioned: st
     # access too, so provisioning's verify has nothing left to re-assert.
     assert ddl == []
     assert len(executed) < 40, len(executed)
+
+
+def test_a_practice_provisioned_before_the_switch_is_left_exactly_as_it_was(
+    engine: Engine, rebuilt: tuple[str, Any]
+) -> None:
+    """The first pass after deploying the run-time switch changes no existing practice.
+
+    Before it, a practice got its row-level security from the planner, which is
+    what the ``rebuilt`` practice holds. The pass the migrate now ends with must
+    find it already matching the template, and change nothing at all.
+    """
+    from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
+
+    schema, _ = rebuilt
+    before = _state(engine, schema)
+    counts = reconcile_tenant_rls(engine, schema)
+
+    assert counts.altered == 0
+    assert counts.skipped == 0
+    assert _state(engine, schema) == before

@@ -53,7 +53,6 @@ import pytest
 from app.db.migrate_tenants import fan_out
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
-from sqlalchemy.orm import Session as OrmSession
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -458,13 +457,14 @@ def test_tables_another_layer_added_do_not_fail_the_practice(
     assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
 
     messages = [record.getMessage() for record in caplog.records]
+    warnings = [m for m in messages if "no SQL file creates" in m]
+    assert len(warnings) == 1, f"expected one warning naming both tables, got {warnings}"
     for table in ("other_layer_dispatches", "other_layer_events"):
         assert _rls_flags(engine, schema, table) == (False, False), (
             f"{table} is not the engine's to police — it must be left as it was"
         )
         assert _policy_names(engine, schema, table) == set()
-        warnings = [m for m in messages if "skipped unknown table" in m and table in m]
-        assert len(warnings) == 1, f"expected exactly one warning for {table}, got {warnings}"
+        assert table in warnings[0]
 
     # And the engine's own table, aged alongside them, still got its policies.
     assert _rls_flags(engine, schema, _THREADS) == (True, True)
@@ -474,18 +474,20 @@ def test_tables_another_layer_added_do_not_fail_the_practice(
 def test_provisioning_still_raises_on_a_table_it_cannot_policy(
     engine: Engine, aged: tuple[str, str, str]
 ) -> None:
-    """The strict path keeps its guard: a table with no policy shape is deny-all.
+    """The strict path keeps its guard: a table no template creates stops the schema.
 
-    Provisioning sees the engine's tables and nothing else, so anything
-    unrecognised there is a new engine table whose author forgot a policy
-    branch. That must still stop the schema rather than ship it.
+    Provisioning builds a schema from the templates and nothing else, so a
+    table outside them means a template is missing from the setting, and
+    nothing would give that table row-level security. The practice must be
+    refused rather than shipped, and nothing changed on the way.
     """
-    from app.db import enable_rls_on_schema  # noqa: PLC0415
+    from app.db.provisioning import reconcile_practice_rls  # noqa: PLC0415
 
     schema, _, _ = aged
     _add_foreign_table(engine, schema, "other_layer_dispatches", "payload jsonb")
+    before = _policy_names(engine, schema, _THREADS)
 
-    with OrmSession(engine) as session:
-        session.execute(text(f"SET search_path = {schema}, platform, public"))
-        with pytest.raises(RuntimeError, match="no RLS policy defined"):
-            enable_rls_on_schema(session, schema)
+    with pytest.raises(RuntimeError, match=r"no tenant template creates.*other_layer_dispatches"):
+        reconcile_practice_rls(engine, schema)
+
+    assert _policy_names(engine, schema, _THREADS) == before
