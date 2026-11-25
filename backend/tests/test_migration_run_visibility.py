@@ -1,25 +1,22 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Who sees an import run: the clinician who started it, the practice owner,
-and the admins the owner named. Nobody else.
+"""Importing is the practice owner's and admins' act. Nobody else's.
 
 A run's preview lists every client in the archive, and while the archive is
-kept its files can be opened, so a colleague in the same practice must not
-reach it. For every route that takes a run id:
+kept its files can be opened, so any other clinician, the one who started a
+run before this rule included, is refused:
 
-* the clinician who started the run gets through;
-* a colleague who did not gets 404 (never 403, so ids cannot be probed), and
-  nothing happens: no audit entry, no step dispatched, no undo, the run as it
-  was;
-* the practice owner and an admin the owner named get through to a colleague's
-  run.
+* starting an import answers 403 and keeps nothing;
+* every route that takes a run id answers 404 (never 403, so ids cannot be
+  probed), and nothing happens: no audit entry, no step dispatched, no undo,
+  the run as it was;
+* the history is empty.
 
-The history lists the caller's own runs, or every run for the owner and its
-admins.
-
-The owner-or-admin check runs for real against a practice row stood in for the
-session, as in ``test_portal_and_scheduling_admin_gate.py``. The same journeys
-run against Postgres in ``tests_integration/api/test_import_run_visibility.py``.
+The practice owner and an admin the owner named get through every route and
+see every run. The owner-or-admin check runs for real against a practice row
+stood in for the session, as in ``test_portal_and_scheduling_admin_gate.py``.
+The same journeys run against Postgres in
+``tests_integration/api/test_import_run_visibility.py``.
 """
 
 from __future__ import annotations
@@ -108,6 +105,11 @@ class _Store:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.deleted: list[str | None] = []
+        self.put_count = 0
+
+    def put(self, _schema: str, _upload: Path, _password: str | None) -> str:
+        self.put_count += 1
+        return "archive-ref"
 
     def path(self, _schema: str, ref: str) -> Path | None:
         return self.root if ref else None
@@ -163,12 +165,14 @@ def harness(
         practice if model is PracticeRow and key == PRACTICE_ID else None
     )
 
-    def _list_runs(_session: Any, *, started_by: str | None = None) -> list[Any]:
-        return [r for r in runs.values() if started_by is None or r.started_by == started_by]
+    def _new_run(_session: Any, *, started_by: str, **_kw: Any) -> SimpleNamespace:
+        run = runs[RUN_ID] = _run(RUN_ID, started_by, "previewing")
+        return run
 
     monkeypatch.setattr(migration_routes, "get_db_session", lambda: session)
     monkeypatch.setattr(migration_routes, "get_run", lambda _s, run_id: runs.get(run_id))
-    monkeypatch.setattr(migration_routes, "list_runs", _list_runs)
+    monkeypatch.setattr(migration_routes, "list_runs", lambda _s: list(runs.values()))
+    monkeypatch.setattr(migration_routes, "new_run", _new_run)
     monkeypatch.setattr(migration_routes, "client_records_for_run", lambda _s, _id: [])
     monkeypatch.setattr(migration_routes, "sweep_expired_archives", lambda *_a: None)
     monkeypatch.setattr(migration_routes, "archive_store", lambda: store)
@@ -201,25 +205,14 @@ def _snapshot(run: SimpleNamespace) -> dict[str, Any]:
 # --------------------------------------------------------------------------- per-run routes
 
 
+@pytest.mark.parametrize("who", [AVERY, BLAKE], ids=["started-it", "colleague"])
 @pytest.mark.parametrize(("method", "path", "body", "state", "ok"), RUN_ROUTES, ids=_IDS)
-def test_the_clinician_who_started_the_run_gets_through(
-    harness: dict[str, Any], method: str, path: str, body: Any, state: str, ok: int
-) -> None:
-    harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, state)
-
-    resp = _call(harness, method, path, body, RUN_ID)
-
-    assert resp.status_code == ok, resp.text
-    assert len(harness["audit"].entries) == 1
-
-
-@pytest.mark.parametrize(("method", "path", "body", "state", "ok"), RUN_ROUTES, ids=_IDS)
-def test_a_colleague_gets_404_and_nothing_happens(
-    harness: dict[str, Any], method: str, path: str, body: Any, state: str, ok: int
+def test_a_clinician_who_is_not_owner_or_admin_gets_404_and_nothing_happens(
+    harness: dict[str, Any], who: Any, method: str, path: str, body: Any, state: str, ok: int
 ) -> None:
     run = harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, state)
     before = _snapshot(run)
-    harness["acting"]["user"] = BLAKE
+    harness["acting"]["user"] = who
 
     resp = _call(harness, method, path, body, RUN_ID)
 
@@ -234,7 +227,7 @@ def test_a_colleague_gets_404_and_nothing_happens(
 
 
 @pytest.mark.parametrize(("method", "path", "body", "state", "ok"), RUN_ROUTES, ids=_IDS)
-def test_a_colleagues_404_is_the_same_as_a_run_that_does_not_exist(
+def test_the_404_is_the_same_as_a_run_that_does_not_exist(
     harness: dict[str, Any], method: str, path: str, body: Any, state: str, ok: int
 ) -> None:
     harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, state)
@@ -276,6 +269,7 @@ def test_an_admin_the_owner_named_gets_through_to_a_colleagues_run(
     resp = _call(harness, method, path, body, RUN_ID)
 
     assert resp.status_code == ok, resp.text
+    assert len(harness["audit"].entries) == 1
 
 
 def test_every_run_route_is_covered() -> None:
@@ -294,6 +288,87 @@ def test_every_run_route_is_covered() -> None:
     assert on_router == covered
 
 
+# --------------------------------------------------------------------------- start
+
+
+def _start(harness: dict[str, Any]) -> Any:
+    return harness["client"].post(
+        "/api/migration/runs",
+        files={"file": ("export.zip", b"PK\x05\x06" + b"\0" * 18, "application/zip")},
+        data={"scope": "patients"},
+    )
+
+
+def test_a_clinician_who_is_not_owner_or_admin_cannot_start_an_import(
+    harness: dict[str, Any],
+) -> None:
+    harness["acting"]["user"] = AVERY
+
+    resp = _start(harness)
+
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["code"] == "IMPORT_OWNER_ONLY"
+    assert "practice owner" in resp.json()["error"]["message"]
+    assert harness["store"].put_count == 0
+    assert harness["runs"] == {}
+    assert harness["audit"].entries == []
+    assert harness["dispatched"] == []
+
+
+def test_the_owner_starts_an_import(harness: dict[str, Any]) -> None:
+    harness["acting"]["user"] = OWNER
+
+    resp = _start(harness)
+
+    assert resp.status_code == 202, resp.text
+    assert harness["runs"][RUN_ID].started_by == OWNER_ID
+    assert harness["dispatched"] == [("preview", RUN_ID)]
+
+
+def test_an_admin_starts_an_import(
+    harness: dict[str, Any], practice_admins: InMemoryPracticeAdminRepository
+) -> None:
+    practice_admins.grant(BLAKE_ID, OWNER_ID, datetime(2026, 11, 2, tzinfo=UTC))
+    harness["acting"]["user"] = BLAKE
+
+    assert _start(harness).status_code == 202
+
+
+# --------------------------------------------------------------------------- apply
+
+
+def test_apply_lands_a_provider_under_me(harness: dict[str, Any]) -> None:
+    run = harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, "previewed")
+    run.preview["questions"]["providers"] = [{"name": "Avery Provider"}]
+    harness["acting"]["user"] = OWNER
+
+    resp = harness["client"].post(
+        f"/api/migration/runs/{RUN_ID}/apply", json={"providers": {"Avery Provider": "me"}}
+    )
+
+    assert resp.status_code == 202, resp.text
+    assert harness["dispatched"] == [("apply", RUN_ID)]
+
+
+@pytest.mark.parametrize("value", [AVERY_ID, "not-a-member"], ids=["colleague", "stranger"])
+def test_apply_refuses_any_provider_value_but_me_and_writes_nothing(
+    harness: dict[str, Any], value: str
+) -> None:
+    run = harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, "previewed")
+    run.preview["questions"]["providers"] = [{"name": "Avery Provider"}]
+    before = _snapshot(run)
+    harness["acting"]["user"] = OWNER
+
+    resp = harness["client"].post(
+        f"/api/migration/runs/{RUN_ID}/apply", json={"providers": {"Avery Provider": value}}
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert _snapshot(run) == before
+    assert harness["audit"].entries == []
+    assert harness["dispatched"] == []
+
+
 # --------------------------------------------------------------------------- history
 
 
@@ -303,18 +378,12 @@ def _listed(harness: dict[str, Any]) -> set[str]:
     return {r["id"] for r in resp.json()["runs"]}
 
 
-def test_the_history_lists_only_the_callers_own_runs(harness: dict[str, Any]) -> None:
+@pytest.mark.parametrize("who", [AVERY, BLAKE], ids=["started-it", "colleague"])
+def test_a_clinician_who_is_not_owner_or_admin_sees_an_empty_history(
+    harness: dict[str, Any], who: Any
+) -> None:
     harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, "previewed")
-    harness["runs"][BLAKE_RUN_ID] = _run(BLAKE_RUN_ID, BLAKE_ID, "previewed")
-
-    assert _listed(harness) == {RUN_ID}
-    harness["acting"]["user"] = BLAKE
-    assert _listed(harness) == {BLAKE_RUN_ID}
-
-
-def test_a_colleague_with_no_runs_sees_an_empty_history(harness: dict[str, Any]) -> None:
-    harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, "previewed")
-    harness["acting"]["user"] = BLAKE
+    harness["acting"]["user"] = who
 
     assert _listed(harness) == set()
     assert harness["audit"].changes == [{"runs": 0}]
@@ -339,7 +408,7 @@ def test_an_admin_sees_every_run_in_the_history(
     assert _listed(harness) == {RUN_ID, BLAKE_RUN_ID}
 
 
-def test_no_practice_row_means_only_your_own_runs(harness: dict[str, Any]) -> None:
+def test_no_practice_row_means_no_imports(harness: dict[str, Any]) -> None:
     """A caller whose practice cannot be found is nobody's owner or admin."""
     harness["runs"][RUN_ID] = _run(RUN_ID, AVERY_ID, "previewed")
     harness["acting"]["user"] = OWNER
@@ -350,3 +419,4 @@ def test_no_practice_row_means_only_your_own_runs(harness: dict[str, Any]) -> No
     assert _listed(harness) == set()
     resp = harness["client"].get(f"/api/migration/runs/{RUN_ID}")
     assert resp.status_code == 404
+    assert _start(harness).status_code == 403

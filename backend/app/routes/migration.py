@@ -7,12 +7,11 @@ apply, and — if it was the wrong archive — undo. Every route is scoped to th
 signed-in clinician's practice and audited by handle: run ids, counts and
 states, never a name, a file name or anything read from the archive.
 
-A run belongs to the clinician who started it. Its preview lists every client
-in the archive, and while the archive is kept its files can be opened, so no
-other clinician sees or acts on it, except the practice owner and the admins
-the owner named, who see every run in the practice. A run the caller may not
-see answers 404, exactly as one that does not exist, so ids cannot be probed;
-the history lists only the runs the caller may see.
+Importing is a practice-level act: only the practice owner and the admins the
+owner named start, read, apply, undo or open an import run. A run's preview
+lists every client in the archive, so any other clinician is refused: 403 on
+start, 404 on every run id (exactly as a run that does not exist, so ids
+cannot be probed), and an empty history.
 
 Preview and apply are background steps (see :mod:`app.migration.jobs`): the
 POST returns 202 with the run, and the screen polls the run until its state
@@ -29,7 +28,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Request, Up
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from ..api_errors import BadRequestError, ConflictError, NotFoundError, UnprocessableEntityError
+from ..api_errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
@@ -195,12 +200,8 @@ def _schema(ctx: TenantContext) -> str:
     return ctx.practice_schema
 
 
-def _sees_every_run(ctx: TenantContext, user: User) -> bool:
-    """Whether the caller sees every clinician's imports, not just their own.
-
-    The practice owner and the admins the owner named do: the same rule the
-    practice-wide settings use (``app.routes.users._is_practice_admin``).
-    """
+def _imports_allowed(ctx: TenantContext, user: User) -> bool:
+    """Whether the caller is the practice owner or an admin the owner named."""
     if not ctx.practice_id:
         return False
     practice = get_db_session().get(PracticeRow, ctx.practice_id)
@@ -208,13 +209,11 @@ def _sees_every_run(ctx: TenantContext, user: User) -> bool:
 
 
 def _run_or_404(run_id: str, ctx: TenantContext, user: User) -> Any:
-    """The run, if the caller started it or sees every run; otherwise 404.
-
-    Never 403: a run someone else started answers exactly as one that does
-    not exist, so a clinician cannot learn which ids are in use.
-    """
+    """The run, for the owner or an admin; 404 for anyone else, as if it did not exist."""
+    if not _imports_allowed(ctx, user):
+        raise NotFoundError("That import was not found.")
     run = get_run(get_db_session(), run_id)
-    if run is None or (str(run.started_by) != user.id and not _sees_every_run(ctx, user)):
+    if run is None:
         raise NotFoundError("That import was not found.")
     return run
 
@@ -381,6 +380,11 @@ async def start_import(
     It is used to unpack the archive and kept nowhere: not on the run, not in
     the audit trail, not in a log.
     """
+    if not _imports_allowed(ctx, user):
+        raise ForbiddenError(
+            "Only the practice owner or an admin can import records. Ask your practice owner.",
+            code="IMPORT_OWNER_ONLY",
+        )
     store = archive_store()
     session = get_db_session()
     sweep_expired_archives(session, store, _schema(ctx), utc_now())
@@ -416,11 +420,12 @@ def list_imports(
     user: Annotated[User, Depends(require_baa_acceptance)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ImportRunList:
-    """Import history, newest first: the caller's own runs, or every run for
-    the practice owner and its admins."""
-    session = get_db_session()
-    sweep_expired_archives(session, archive_store(), _schema(ctx), utc_now())
-    runs = list_runs(session, started_by=None if _sees_every_run(ctx, user) else user.id)
+    """Import history, newest first; empty for anyone but the owner and admins."""
+    runs: list[Any] = []
+    if _imports_allowed(ctx, user):
+        session = get_db_session()
+        sweep_expired_archives(session, archive_store(), _schema(ctx), utc_now())
+        runs = list_runs(session)
     audit.log(
         "import_history_viewed",
         user,

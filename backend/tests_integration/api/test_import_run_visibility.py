@@ -1,17 +1,22 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Who sees an import run, through the real API on real Postgres.
+"""Who imports, through the real API on real Postgres.
 
 Three clinicians in one practice: Olive owns it, Avery and Blake work in it.
-Avery uploads a captured SimplePractice export; its preview lists every client
-in the archive and, while the archive is kept, any file in it can be opened.
+Importing is the owner's and admins' act, because a run's preview lists every
+client in the archive and, while the archive is kept, any file in it can be
+opened.
 
-* Blake lists nothing, and reading the run, opening one of its files, applying
-  it, undoing it and deleting its archive all answer 404, the same 404 as a run
-  that does not exist. The run row is exactly as Avery left it.
-* Avery reads it, opens the file, applies it and undoes it.
-* Olive, as the owner, sees Avery's run in the history and reads it; so does
-  Blake once Olive makes Blake an admin, and not after the grant is taken away.
+* Avery cannot start an import (403), and nothing is kept.
+* Olive uploads a captured SimplePractice export. Avery and Blake list nothing,
+  and reading the run, opening one of its files, applying it, undoing it and
+  deleting its archive all answer 404, the same 404 as a run that does not
+  exist. The run row is exactly as Olive left it. Olive reads it, opens the
+  file, applies it and undoes it.
+* Blake sees Olive's run and may start one once Olive makes Blake an admin, and
+  not after the grant is taken away.
+* Apply lands a provider under "me"; any other value is refused with 422 and
+  nothing is written.
 
 The routes, the background preview and apply, the ledger and the owner-or-admin
 check run for real against a practice schema provisioned the production way and
@@ -105,7 +110,7 @@ def schema(engine: Engine) -> Iterator[str]:
 
 @pytest.fixture
 def acting() -> dict[str, User]:
-    return {"user": _user(_AVERY)}
+    return {"user": _user(_OLIVE)}
 
 
 @pytest.fixture
@@ -167,13 +172,17 @@ def _as(acting: dict[str, User], user_id: str) -> None:
     acting["user"] = _user(user_id)
 
 
-def _avery_uploads(client: TestClient, acting: dict[str, User]) -> dict[str, Any]:
-    _as(acting, _AVERY)
-    resp = client.post(
+def _start(client: TestClient) -> Response:
+    return client.post(
         "/api/migration/runs",
         files={"file": ("export.zip", _zip(_MAIN), "application/zip")},
         data={"scope": "patients"},
     )
+
+
+def _olive_uploads(client: TestClient, acting: dict[str, User]) -> dict[str, Any]:
+    _as(acting, _OLIVE)
+    resp = _start(client)
     assert resp.status_code == 202, resp.text
     run = client.get(f"/api/migration/runs/{resp.json()['id']}")
     assert run.status_code == 200, run.text
@@ -182,13 +191,13 @@ def _avery_uploads(client: TestClient, acting: dict[str, User]) -> dict[str, Any
     return body
 
 
-def _decisions(run: dict[str, Any]) -> dict[str, Any]:
+def _decisions(run: dict[str, Any], provider: str = "me") -> dict[str, Any]:
     assignments = {
         f"{r['record_type']}:{r['source_id']}": _PABLO_A
         for g in run["preview"]["questions"]["same_name"]
         for r in g["records"]
     }
-    return {"providers": {"Avery Provider": "me"}, "assignments": assignments}
+    return {"providers": {"Avery Provider": provider}, "assignments": assignments}
 
 
 def _a_file(run: dict[str, Any]) -> str:
@@ -213,7 +222,7 @@ def _row(engine: Engine, schema: str, run_id: str) -> dict[str, Any]:
     return dict(row._mapping)
 
 
-def _blakes_requests(client: TestClient, run: dict[str, Any]) -> dict[str, Response]:
+def _run_requests(client: TestClient, run: dict[str, Any]) -> dict[str, Response]:
     run_id = run["id"]
     return {
         "detail": client.get(f"/api/migration/runs/{run_id}"),
@@ -227,25 +236,46 @@ def _blakes_requests(client: TestClient, run: dict[str, Any]) -> dict[str, Respo
 # --------------------------------------------------------------------------- journeys
 
 
-def test_a_colleague_cannot_reach_another_clinicians_run(
+def _runs_and_patients(engine: Engine, schema: str) -> tuple[int, int]:
+    with engine.connect() as conn:
+        return (
+            conn.execute(text(f"SELECT count(*) FROM {schema}.import_runs")).scalar_one(),  # noqa: S608 — schema name, not user input
+            conn.execute(text(f"SELECT count(*) FROM {schema}.patients")).scalar_one(),  # noqa: S608 — schema name, not user input
+        )
+
+
+def test_a_clinician_who_is_not_owner_or_admin_cannot_start_an_import(
     client: TestClient, acting: dict[str, User], engine: Engine, schema: str
 ) -> None:
-    run = _avery_uploads(client, acting)
+    _as(acting, _AVERY)
+
+    resp = _start(client)
+
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["code"] == "IMPORT_OWNER_ONLY"
+    assert _runs_and_patients(engine, schema) == (0, 0)
+
+
+@pytest.mark.parametrize("who", [_AVERY, _BLAKE])
+def test_a_clinician_who_is_not_owner_or_admin_cannot_reach_a_run(
+    client: TestClient, acting: dict[str, User], engine: Engine, schema: str, who: str
+) -> None:
+    run = _olive_uploads(client, acting)
     before = _row(engine, schema, run["id"])
     assert before["archive_ref"] is not None
 
-    _as(acting, _BLAKE)
+    _as(acting, who)
     assert _listed(client) == set()
     nobody = client.get(f"/api/migration/runs/{uuid.uuid4()}")
     assert nobody.status_code == 404
-    for name, resp in _blakes_requests(client, run).items():
+    for name, resp in _run_requests(client, run).items():
         assert resp.status_code == 404, (name, resp.text)
         if name != "file":
             assert resp.json() == nobody.json(), name
     assert _row(engine, schema, run["id"]) == before
 
-    # Avery, meanwhile, has it all.
-    _as(acting, _AVERY)
+    # Olive, meanwhile, has it all.
+    _as(acting, _OLIVE)
     assert _listed(client) == {run["id"]}
     viewed = client.get(f"/api/migration/runs/{run['id']}/files", params={"path": _a_file(run)})
     assert viewed.status_code == 200
@@ -255,30 +285,37 @@ def test_a_colleague_cannot_reach_another_clinicians_run(
     done = client.get(f"/api/migration/runs/{run['id']}").json()
     assert done["state"] == "applied", done.get("error")
 
-    # Applied, it is still Avery's alone: Blake can neither read nor undo it.
-    _as(acting, _BLAKE)
+    # Applied, it is still out of reach: no read, no undo.
+    _as(acting, who)
     assert client.get(f"/api/migration/runs/{run['id']}").status_code == 404
     assert client.post(f"/api/migration/runs/{run['id']}/undo", json={}).status_code == 404
     assert _row(engine, schema, run["id"])["state"] == "applied"
 
-    _as(acting, _AVERY)
+    _as(acting, _OLIVE)
     undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
     assert undone.status_code == 200, undone.text
     assert undone.json()["state"] == "undone"
 
 
-def test_the_owner_and_an_admin_see_a_colleagues_run(
+@pytest.mark.parametrize("provider", [_AVERY, str(uuid.uuid4())], ids=["member", "stranger"])
+def test_apply_refuses_any_provider_value_but_me_and_writes_nothing(
+    client: TestClient, acting: dict[str, User], engine: Engine, schema: str, provider: str
+) -> None:
+    run = _olive_uploads(client, acting)
+    before = _row(engine, schema, run["id"])
+
+    resp = client.post(f"/api/migration/runs/{run['id']}/apply", json=_decisions(run, provider))
+
+    assert resp.status_code == 422, resp.text
+    assert _row(engine, schema, run["id"]) == before
+    assert _runs_and_patients(engine, schema) == (1, 0)
+
+
+def test_an_admin_imports_until_the_grant_is_taken_away(
     client: TestClient, acting: dict[str, User], engine: Engine, schema: str
 ) -> None:
-    run = _avery_uploads(client, acting)
+    run = _olive_uploads(client, acting)
 
-    _as(acting, _OLIVE)
-    assert _listed(client) == {run["id"]}
-    detail = client.get(f"/api/migration/runs/{run['id']}")
-    assert detail.status_code == 200, detail.text
-    assert detail.json()["preview"] == run["preview"]
-
-    # Blake sees it once Olive makes Blake an admin, and no longer after.
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -289,9 +326,13 @@ def test_the_owner_and_an_admin_see_a_colleagues_run(
         )
     _as(acting, _BLAKE)
     assert _listed(client) == {run["id"]}
-    assert client.get(f"/api/migration/runs/{run['id']}").status_code == 200
+    detail = client.get(f"/api/migration/runs/{run['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["preview"] == run["preview"]
+    assert _start(client).status_code == 202
 
     with engine.begin() as conn:
         conn.execute(text(f"DELETE FROM {schema}.practice_admins"))  # noqa: S608 — schema name, not user input
     assert _listed(client) == set()
     assert client.get(f"/api/migration/runs/{run['id']}").status_code == 404
+    assert _start(client).status_code == 403

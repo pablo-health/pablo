@@ -51,6 +51,7 @@ pytestmark = pytest.mark.skipif(
 os.environ.setdefault("ENVIRONMENT", "development")
 
 _USER = "4c2e8a1f-6b3d-4e70-9c15-2a7d8e9f0b31"
+_PRACTICE_ID = f"import-test-{uuid.uuid4().hex[:8]}"
 _FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 MAIN = _FIXTURES / "simplepractice_export"
 NO_DOB = _FIXTURES / "simplepractice_export_same_name_no_dob"
@@ -70,8 +71,20 @@ def schema(engine: Engine) -> Iterator[str]:
         conn.commit()
     name = f"practice_test_import_{uuid.uuid4().hex[:10]}"
     create_practice_schema(engine, name)
+    # Importing is the practice owner's act; the importer here owns the practice.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO platform.practices (id, name, schema_name, owner_email,"
+                " owner_user_id, product, status, is_active, created_at)"
+                " VALUES (:i, 'Import Test', :s, 'import-e2e@example.com',"
+                " CAST(:o AS uuid), 'pablo', 'active', true, now())"
+            ),
+            {"i": _PRACTICE_ID, "s": name, "o": _USER},
+        )
     yield name
     with engine.connect() as conn:
+        conn.execute(text("DELETE FROM platform.practices WHERE id = :p"), {"p": _PRACTICE_ID})
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
         conn.commit()
 
@@ -108,7 +121,7 @@ def client(schema: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iter
 
     def _ctx() -> TenantContext:
         arm_current_user_id(get_db_session(), _USER)
-        return TenantContext(user_id=_USER, practice_id="import-test", practice_schema=schema)
+        return TenantContext(user_id=_USER, practice_id=_PRACTICE_ID, practice_schema=schema)
 
     app.dependency_overrides[get_current_user_id] = lambda: _USER
     app.dependency_overrides[get_current_user] = lambda: user
