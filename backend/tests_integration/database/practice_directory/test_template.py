@@ -43,6 +43,13 @@ class TestTheTemplateCarriesTheAccess:
             PATIENT_COLUMNS,
             apply_practice_directory_access,
         )
+        from app.db.practice_directory_definitions import (
+            CLAIM_APPOINTMENT_COLUMNS,
+            CLAIM_APPOINTMENT_TYPE_COLUMNS,
+            CLAIM_CLINICIAN_COLUMNS,
+            CLAIM_COVERAGE_COLUMNS,
+            CLAIM_PATIENT_COLUMNS,
+        )
 
         schema = _new_schema(engine, "dir_template")
         try:
@@ -50,25 +57,34 @@ class TestTheTemplateCarriesTheAccess:
 
             path = [f"search_path=pg_catalog, {schema}, pg_temp"]
             assert provisioned["functions"] == [
+                ("practice_claim_source", _ROLE, path),
                 ("practice_client_directory", _ROLE, path),
                 ("practice_outside_appointment", _ROLE, path),
             ]
             assert provisioned["columns"] == sorted(
-                (table, column, "SELECT")
-                for table, columns in (
-                    ("appointments", APPOINTMENT_COLUMNS),
-                    ("patient_clinicians", GRANT_COLUMNS),
-                    ("patients", PATIENT_COLUMNS),
-                )
-                for column in columns
+                {
+                    (table, column, "SELECT")
+                    for table, columns in (
+                        ("appointments", APPOINTMENT_COLUMNS + CLAIM_APPOINTMENT_COLUMNS),
+                        ("patient_clinicians", GRANT_COLUMNS),
+                        ("patients", PATIENT_COLUMNS + CLAIM_PATIENT_COLUMNS),
+                        ("patient_coverage", CLAIM_COVERAGE_COLUMNS),
+                        ("appointment_types", CLAIM_APPOINTMENT_TYPE_COLUMNS),
+                        ("clinician_profiles", CLAIM_CLINICIAN_COLUMNS),
+                    )
+                    for column in columns
+                }
             )
             # It may use the schema, and it kept none of the right to create in it.
             assert provisioned["schema"] == (True, False)
             policies = provisioned["policies"]
             assert isinstance(policies, list)
             assert [(table, cmd, roles) for table, cmd, roles, _ in policies] == [
+                ("appointment_types", "SELECT", [_ROLE]),
                 ("appointments", "SELECT", [_ROLE]),
+                ("clinician_profiles", "SELECT", [_ROLE]),
                 ("patient_clinicians", "SELECT", [_ROLE]),
+                ("patient_coverage", "SELECT", [_ROLE]),
                 ("patients", "SELECT", [_ROLE]),
             ]
 

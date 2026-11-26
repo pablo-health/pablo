@@ -64,9 +64,17 @@ def test_the_practice_directory_reaches_the_renamed_schema(old_shape: Engine) ->
             ),
             {"s": DEFAULT_PRACTICE_OWN_SCHEMA},
         ).scalars()
-        assert list(policies) == ["appointments", "patient_clinicians", "patients"]
+        assert list(policies) == [
+            "appointment_types",
+            "appointments",
+            "clinician_profiles",
+            "patient_clinicians",
+            "patient_coverage",
+            "patients",
+        ]
     path = [f"search_path=pg_catalog, {DEFAULT_PRACTICE_OWN_SCHEMA}, pg_temp"]
     assert [tuple(row) for row in functions] == [
+        ("practice_claim_source", "pablo_practice_directory", path),
         ("practice_client_directory", "pablo_practice_directory", path),
         ("practice_outside_appointment", "pablo_practice_directory", path),
     ]

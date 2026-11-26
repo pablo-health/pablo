@@ -85,8 +85,11 @@ def test_every_policy_in_the_section_is_forced_and_fingerprinted() -> None:
     # does not manage them, so it wrote no fingerprint to capture.
     directory = {(name, table) for name, table in created if name == DIRECTORY_POLICY}
     assert {table for _, table in directory} == {
+        "__TENANT_SCHEMA__.appointment_types",
         "__TENANT_SCHEMA__.appointments",
+        "__TENANT_SCHEMA__.clinician_profiles",
         "__TENANT_SCHEMA__.patient_clinicians",
+        "__TENANT_SCHEMA__.patient_coverage",
         "__TENANT_SCHEMA__.patients",
     }
     assert created - directory <= commented
@@ -121,11 +124,19 @@ def test_the_section_ends_with_the_directory_access_the_code_would_apply(
 
 def test_the_directory_access_names_every_table_and_function_once() -> None:
     sql = directory_access_sql("practice_x")
-    for table in ("patients", "patient_clinicians", "appointments"):
+    for table in (
+        "patients",
+        "patient_clinicians",
+        "appointments",
+        "patient_coverage",
+        "appointment_types",
+        "clinician_profiles",
+    ):
         assert sql.count(f" ON practice_x.{table} TO {DIRECTORY_ROLE};") == 1
     for function in (
         "practice_client_directory()",
         "practice_outside_appointment(text, text, text)",
+        "practice_claim_source(uuid)",
     ):
         assert f"ALTER FUNCTION practice_x.{function} OWNER TO {DIRECTORY_ROLE};" in sql
         assert (
@@ -133,7 +144,7 @@ def test_the_directory_access_names_every_table_and_function_once() -> None:
             "SET search_path = pg_catalog, practice_x, pg_temp;" in sql
         )
     # The role may create in the schema only while it is being made an owner.
-    assert sql.count("GRANT CREATE ON SCHEMA") == sql.count("REVOKE CREATE ON SCHEMA") == 2
+    assert sql.count("GRANT CREATE ON SCHEMA") == sql.count("REVOKE CREATE ON SCHEMA") == 3
     assert sql.rstrip().endswith(f"REVOKE CREATE ON SCHEMA practice_x FROM {DIRECTORY_ROLE};")
 
 

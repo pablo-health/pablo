@@ -66,8 +66,11 @@ def test_the_committed_template_reads_whole() -> None:
         assert set(table.comments) == set(table.policies) - {DIRECTORY_POLICY}, name
         assert all(c.startswith(FINGERPRINT_PREFIX) for c in table.comments.values()), name
     assert {name for name, table in desired.items() if DIRECTORY_POLICY in table.policies} == {
+        "appointment_types",
         "appointments",
+        "clinician_profiles",
         "patient_clinicians",
+        "patient_coverage",
         "patients",
     }
 

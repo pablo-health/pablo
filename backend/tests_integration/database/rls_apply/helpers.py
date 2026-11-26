@@ -31,9 +31,16 @@ _TREATING = "3a7e1c82-45bd-5f19-8c62-0e4d7b3a9f15"
 _COLLEAGUE = "9c4f2b61-7d3e-5a80-b915-6e2a8d0c4f37"
 
 
-# The directory policy is captured from the three tables its functions read.
+# The directory policy is captured from the tables its functions read.
 _DIRECTORY_POLICY = "rls_practice_directory_read"
-_DIRECTORY_TABLES = {"appointments", "patient_clinicians", "patients"}
+_DIRECTORY_TABLES = {
+    "appointment_types",
+    "appointments",
+    "clinician_profiles",
+    "patient_clinicians",
+    "patient_coverage",
+    "patients",
+}
 
 
 def _new_schema(engine: Engine, label: str) -> str:

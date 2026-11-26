@@ -81,6 +81,9 @@ class TestRewalkingTheRevision:
                 "patients",
                 "patient_clinicians",
                 "appointments",
+                "patient_coverage",
+                "appointment_types",
+                "clinician_profiles",
             }
         finally:
             _drop(engine, schema)
