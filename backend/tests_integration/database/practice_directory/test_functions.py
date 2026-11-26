@@ -135,15 +135,13 @@ class TestNothingElseWidens:
             conn.commit()
             for denied in (
                 "SELECT diagnosis FROM patients",
-                "SELECT phone FROM patients",
-                "SELECT address_line1 FROM patients",
                 "SELECT role FROM patient_clinicians",
                 "SELECT id FROM notes",
-                # The outside-event lookup reads appointment ids and their
-                # outside links, and nothing that says whose session it is.
-                "SELECT patient_id FROM appointments",
+                # The claim source reads a visit's codes, never what was said.
                 "SELECT title FROM appointments",
-                "SELECT user_id FROM appointments",
+                "SELECT notes FROM appointments",
+                "SELECT license_number FROM clinician_profiles",
+                "SELECT name FROM appointment_types",
             ):
                 conn.execute(text(f"SET ROLE {_ROLE}"))
                 with pytest.raises(ProgrammingError, match="permission denied"):

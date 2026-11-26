@@ -73,6 +73,46 @@ CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_i
 
 
 
+CREATE FUNCTION __TENANT_SCHEMA__.practice_claim_source(p_appointment_id uuid) RETURNS TABLE(appointment_id uuid, clinician_id uuid, patient_id uuid, appointment_type_id uuid, start_at timestamp with time zone, service_code character varying, unit_count integer, modifiers jsonb, diagnosis_codes jsonb, place_of_service character varying, video_link text, first_name character varying, last_name character varying, date_of_birth date, sex character varying, address_line1 character varying, address_line2 character varying, city character varying, state character varying, postal_code character varying, phone character varying, rate_cents integer, coverage_id uuid, payer_id uuid, member_id character varying, group_number character varying, plan_name character varying, subscriber_relationship character varying, subscriber_first_name character varying, subscriber_last_name character varying, subscriber_date_of_birth date, subscriber_sex character varying, subscriber_address_line1 character varying, subscriber_address_line2 character varying, subscriber_city character varying, subscriber_state character varying, subscriber_postal_code character varying, default_fee_cents integer, npi_number character varying, taxonomy_code character varying)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT a.id, a.user_id, a.patient_id, a.appointment_type_id, a.start_at,
+               a.service_code, a.unit_count, a.modifiers, a.diagnosis_codes,
+               a.place_of_service, a.video_link,
+               p.first_name, p.last_name, p.date_of_birth, p.sex, p.address_line1,
+               p.address_line2, p.city, p.state, p.postal_code, p.phone, p.rate_cents,
+               c.id, c.payer_id, c.member_id, c.group_number, c.plan_name,
+               c.subscriber_relationship, c.subscriber_first_name,
+               c.subscriber_last_name, c.subscriber_date_of_birth, c.subscriber_sex,
+               c.subscriber_address_line1, c.subscriber_address_line2,
+               c.subscriber_city, c.subscriber_state, c.subscriber_postal_code,
+               t.default_fee_cents, cp.npi_number, cp.taxonomy_code
+        FROM __TENANT_SCHEMA__.appointments a
+        JOIN __TENANT_SCHEMA__.patients p
+          ON p.id = a.patient_id AND p.deleted_at IS NULL
+        LEFT JOIN LATERAL (
+            SELECT pc.id, pc.payer_id, pc.member_id, pc.group_number, pc.plan_name,
+                   pc.subscriber_relationship, pc.subscriber_first_name,
+                   pc.subscriber_last_name, pc.subscriber_date_of_birth,
+                   pc.subscriber_sex, pc.subscriber_address_line1,
+                   pc.subscriber_address_line2, pc.subscriber_city,
+                   pc.subscriber_state, pc.subscriber_postal_code
+            FROM __TENANT_SCHEMA__.patient_coverage pc
+            WHERE pc.patient_id = a.patient_id AND pc.active
+            ORDER BY pc.created_at DESC, pc.id DESC
+            LIMIT 1
+        ) c ON true
+        LEFT JOIN __TENANT_SCHEMA__.appointment_types t
+          ON t.id = a.appointment_type_id AND t.user_id = a.user_id
+        LEFT JOIN __TENANT_SCHEMA__.clinician_profiles cp
+          ON cp.user_id = a.user_id
+        WHERE a.id = p_appointment_id
+          AND coalesce(current_setting('app.current_user_id', true), '') <> ''
+    $$;
+
+
+
 CREATE FUNCTION __TENANT_SCHEMA__.practice_client_directory() RETURNS TABLE(id uuid, first_name character varying, last_name character varying, date_of_birth date, email character varying, clinician_ids uuid[])
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -4363,9 +4403,15 @@ CREATE POLICY rls_practice_answers ON __TENANT_SCHEMA__.patient_source_mappings 
 
 COMMENT ON POLICY rls_practice_answers ON __TENANT_SCHEMA__.patient_source_mappings IS 'rls-fingerprint-v1-bc8d9708a09ae42abf5743aa22b7049ae939ca0813f7077247a98f0c0c14b40a';
 
+CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.appointment_types FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
+
 CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.appointments FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
 
+CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.clinician_profiles FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
+
 CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.patient_clinicians FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
+
+CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.patient_coverage FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
 
 CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.patients FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
 
@@ -4453,11 +4499,17 @@ COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries IS 'r
 
 GRANT USAGE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
 
-GRANT SELECT (id, first_name, last_name, date_of_birth, email, status, deleted_at) ON __TENANT_SCHEMA__.patients TO pablo_practice_directory;
+GRANT SELECT (id, first_name, last_name, date_of_birth, email, status, deleted_at, sex, address_line1, address_line2, city, state, postal_code, phone, rate_cents) ON __TENANT_SCHEMA__.patients TO pablo_practice_directory;
 
 GRANT SELECT (patient_id, user_id, starts_at, expires_at) ON __TENANT_SCHEMA__.patient_clinicians TO pablo_practice_directory;
 
-GRANT SELECT (id, outside_source, outside_calendar_id, outside_event_id, status, created_at) ON __TENANT_SCHEMA__.appointments TO pablo_practice_directory;
+GRANT SELECT (id, outside_source, outside_calendar_id, outside_event_id, status, created_at, user_id, patient_id, appointment_type_id, start_at, service_code, unit_count, modifiers, diagnosis_codes, place_of_service, video_link) ON __TENANT_SCHEMA__.appointments TO pablo_practice_directory;
+
+GRANT SELECT (id, patient_id, payer_id, member_id, group_number, plan_name, subscriber_relationship, subscriber_first_name, subscriber_last_name, subscriber_date_of_birth, subscriber_sex, subscriber_address_line1, subscriber_address_line2, subscriber_city, subscriber_state, subscriber_postal_code, active, created_at) ON __TENANT_SCHEMA__.patient_coverage TO pablo_practice_directory;
+
+GRANT SELECT (id, user_id, default_fee_cents) ON __TENANT_SCHEMA__.appointment_types TO pablo_practice_directory;
+
+GRANT SELECT (user_id, npi_number, taxonomy_code) ON __TENANT_SCHEMA__.clinician_profiles TO pablo_practice_directory;
 
 ALTER FUNCTION __TENANT_SCHEMA__.practice_client_directory() SET search_path = pg_catalog, __TENANT_SCHEMA__, pg_temp;
 
@@ -4472,5 +4524,13 @@ ALTER FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(text, text, text) 
 GRANT CREATE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
 
 ALTER FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(text, text, text) OWNER TO pablo_practice_directory;
+
+REVOKE CREATE ON SCHEMA __TENANT_SCHEMA__ FROM pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_claim_source(uuid) SET search_path = pg_catalog, __TENANT_SCHEMA__, pg_temp;
+
+GRANT CREATE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_claim_source(uuid) OWNER TO pablo_practice_directory;
 
 REVOKE CREATE ON SCHEMA __TENANT_SCHEMA__ FROM pablo_practice_directory;

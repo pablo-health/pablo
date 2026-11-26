@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The two reads that see the whole practice: who its clients are, and which
-outside event is already booked.
+"""The three reads that see the whole practice: who its clients are, which
+outside event is already booked, and what a claim for any session needs.
 
 A client belongs to the practice, not to one clinician, so matching a
 calendar event or a feed code must see every chart in the practice — or it
@@ -21,6 +21,16 @@ shared calendar must never book the same session twice, and the second to
 answer links to the first's appointment; the appointment table shows each
 clinician only their own rows, so the link needs this.
 
+``practice_claim_source(appointment_id)`` is what claim assembly reads for
+one visit, whoever held it: the visit's codes, the client's claim
+demographics, the active coverage, the visit type's fee and the treating
+clinician's NPI and taxonomy. It lets someone who bills for the practice
+build a claim for a colleague's session without a grant on the client. Its
+own guard is the armed clinician, like the others'; who may bill is decided
+in the app, by ``app.billing_access.can_bill``, before the call. The
+practice owner is recorded on the platform practice row by email, which this
+schema cannot see, so the function cannot make that check itself.
+
 **Why they need a role of their own.** The app's role owns the tenant tables
 and they are ``FORCE ROW LEVEL SECURITY``, so a ``SECURITY DEFINER`` function
 owned by that role runs under the very policies it is meant to see past.
@@ -32,7 +42,7 @@ inherit its privileges, so every ordinary read keeps exactly the policy it
 had.
 
 **Where the access comes from.** The tenant template carries all of it, so a
-new practice has it once the template is applied: the three read policies,
+new practice has it once the template is applied: the read policies,
 captured like every other policy, and the grants, pinned paths and ownership,
 written out by :func:`directory_access_sql`. Provisioning runs nothing else
 for it, and nothing sets any of it when the app starts.
@@ -71,6 +81,7 @@ from .practice_directory_access import (
 )
 from .practice_directory_definitions import (
     APPOINTMENT_COLUMNS,
+    CLAIM_SOURCE_FUNCTION,
     DIRECTORY_FUNCTION,
     DIRECTORY_POLICY,
     DIRECTORY_ROLE,
@@ -80,10 +91,12 @@ from .practice_directory_definitions import (
 )
 from .practice_directory_functions import (
     as_directory_owner,
+    create_claim_source_function,
     create_directory_function,
     create_directory_function_sql,
     create_outside_appointment_function,
     directory_function_owner,
+    drop_claim_source_function,
     drop_directory_function,
     drop_outside_appointment_function,
     outside_appointment_function_sql,
@@ -92,6 +105,7 @@ from .practice_directory_functions import (
 
 __all__ = [
     "APPOINTMENT_COLUMNS",
+    "CLAIM_SOURCE_FUNCTION",
     "DIRECTORY_FUNCTION",
     "DIRECTORY_POLICY",
     "DIRECTORY_ROLE",
@@ -100,11 +114,13 @@ __all__ = [
     "PATIENT_COLUMNS",
     "apply_practice_directory_access",
     "as_directory_owner",
+    "create_claim_source_function",
     "create_directory_function",
     "create_directory_function_sql",
     "create_outside_appointment_function",
     "directory_access_sql",
     "directory_function_owner",
+    "drop_claim_source_function",
     "drop_directory_function",
     "drop_outside_appointment_function",
     "outside_appointment_function_sql",

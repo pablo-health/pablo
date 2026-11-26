@@ -15,6 +15,8 @@ from .practice_directory_definitions import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from sqlalchemy.engine import Connection
     from sqlalchemy.orm import Session
 
@@ -42,22 +44,22 @@ def apply_practice_directory_access(db: Session | Connection, schema: str) -> No
     require_directory_role(db)
 
     db.execute(text(f"GRANT USAGE ON SCHEMA {schema} TO {DIRECTORY_ROLE}"))
-    for definer, owner in present:
-        for table, columns in definer.reads:
-            granted = _existing_columns(db, schema, table, columns)
-            db.execute(
-                text(f"GRANT SELECT ({', '.join(granted)}) ON {schema}.{table} TO {DIRECTORY_ROLE}")
+    for table, columns in _reads(definer for definer, _ in present).items():
+        granted = _existing_columns(db, schema, table, columns)
+        db.execute(
+            text(f"GRANT SELECT ({', '.join(granted)}) ON {schema}.{table} TO {DIRECTORY_ROLE}")
+        )
+        # Permissive policies OR together, so these widen reads for the
+        # directory role only. Every other role keeps exactly its own.
+        db.execute(text(f"DROP POLICY IF EXISTS {_POLICY} ON {schema}.{table}"))
+        db.execute(
+            text(
+                f"CREATE POLICY {_POLICY} ON {schema}.{table} "
+                f"FOR SELECT TO {DIRECTORY_ROLE} USING ({_ARMED})"
             )
-            # Permissive policies OR together, so these widen reads for the
-            # directory role only. Every other role keeps exactly its own.
-            db.execute(text(f"DROP POLICY IF EXISTS {_POLICY} ON {schema}.{table}"))
-            db.execute(
-                text(
-                    f"CREATE POLICY {_POLICY} ON {schema}.{table} "
-                    f"FOR SELECT TO {DIRECTORY_ROLE} USING ({_ARMED})"
-                )
-            )
+        )
 
+    for definer, owner in present:
         _pin_search_path(db, schema, owner, definer)
 
         if owner != DIRECTORY_ROLE:
@@ -77,7 +79,7 @@ def directory_access_sql(schema: str) -> str:
     its owner: the same end state :func:`apply_practice_directory_access`
     leaves, written out as SQL. The tenant template carries this with the
     schema placeholder for ``schema``, so a new practice gets it when the
-    template is applied. The three read policies are not here: the template
+    template is applied. The read policies are not here: the template
     captures those as it captures every other policy.
 
     Statement order matters. The path is pinned while the function still
@@ -85,11 +87,10 @@ def directory_access_sql(schema: str) -> str:
     ``CREATE`` on the schema only for that one statement.
     """
     statements = [f"GRANT USAGE ON SCHEMA {schema} TO {DIRECTORY_ROLE};"]
-    for definer in _DEFINERS:
-        statements.extend(
-            f"GRANT SELECT ({', '.join(columns)}) ON {schema}.{table} TO {DIRECTORY_ROLE};"
-            for table, columns in definer.reads
-        )
+    statements.extend(
+        f"GRANT SELECT ({', '.join(columns)}) ON {schema}.{table} TO {DIRECTORY_ROLE};"
+        for table, columns in _reads(_DEFINERS).items()
+    )
     for definer in _DEFINERS:
         function = definer.regprocedure(schema)
         statements.extend(
@@ -101,6 +102,15 @@ def directory_access_sql(schema: str) -> str:
             ]
         )
     return "\n\n".join(statements) + "\n"
+
+
+def _reads(definers: Iterable[_Definer]) -> dict[str, tuple[str, ...]]:
+    """Every column the functions read, one entry per table, in first-read order."""
+    reads: dict[str, dict[str, None]] = {}
+    for definer in definers:
+        for table, columns in definer.reads:
+            reads.setdefault(table, {}).update(dict.fromkeys(columns))
+    return {table: tuple(columns) for table, columns in reads.items()}
 
 
 def _existing_columns(

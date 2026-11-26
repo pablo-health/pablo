@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 
 from .practice_directory_definitions import (
+    _CLAIM_SOURCE,
     _DEFINERS,
     _DIRECTORY,
     _OUTSIDE_APPOINTMENT,
@@ -75,6 +76,11 @@ def create_outside_appointment_function(db: Session | Connection, schema: str) -
     _create(db, schema, _OUTSIDE_APPOINTMENT)
 
 
+def create_claim_source_function(db: Session | Connection, schema: str) -> None:
+    """Create this schema's claim source; the same rules as the directory's."""
+    _create(db, schema, _CLAIM_SOURCE)
+
+
 def _create(db: Session | Connection, schema: str, definer: _Definer) -> None:
     if directory_function_owner(db, schema, definer.name) == DIRECTORY_ROLE:
         return
@@ -89,6 +95,11 @@ def drop_directory_function(db: Session | Connection, schema: str) -> None:
 def drop_outside_appointment_function(db: Session | Connection, schema: str) -> None:
     """Drop this schema's outside-appointment lookup, as its owner when that is the role."""
     _drop(db, schema, _OUTSIDE_APPOINTMENT)
+
+
+def drop_claim_source_function(db: Session | Connection, schema: str) -> None:
+    """Drop this schema's claim source, as its owner when that is the role."""
+    _drop(db, schema, _CLAIM_SOURCE)
 
 
 def _drop(db: Session | Connection, schema: str, definer: _Definer) -> None:
