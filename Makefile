@@ -1,4 +1,4 @@
-.PHONY: help install lint format test test-integration test-all check clean export-schema
+.PHONY: help install lint ratchet format test test-integration test-all check clean export-schema
 .PHONY: e2e-up e2e e2e-hosted e2e-down
 .PHONY: docker-up docker-down docker-restart docker-logs docker-shell-backend docker-shell-frontend
 .PHONY: docker-test-backend docker-test-frontend docker-lint-backend docker-lint-frontend docker-check
@@ -51,6 +51,10 @@ lint:
 	poetry run ruff format --check backend/
 	@echo "Running mypy type checker..."
 	cd backend && poetry run mypy app
+
+# File size and copied functions may not get worse (scripts/code_ratchet_baseline.json)
+ratchet:
+	poetry run python scripts/check_code_ratchet.py
 
 # Auto-format code
 format:
@@ -127,7 +131,7 @@ test-all:
 	exit $$rc
 
 # Run all checks (lint + test)
-check: lint test
+check: lint ratchet test
 	@echo "All checks passed!"
 
 # Regenerate the published export schema from the export models
