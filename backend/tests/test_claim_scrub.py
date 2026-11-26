@@ -432,3 +432,8 @@ def test_not_contracted_is_a_warning_naming_the_clinician_and_payer(status: str)
 @pytest.mark.parametrize("status", ["contracted", "in_network", None])
 def test_contracted_or_unknown_status_passes(status: str | None) -> None:
     assert rendering_in_network(claim(), status) == []
+
+
+@pytest.mark.parametrize("state", ["submitted", "paid", "denied", "rejected"])
+def test_a_sent_claim_is_not_told_to_check_before_sending(state: str) -> None:
+    assert rendering_in_network(claim(state=state), "out_of_network") == []

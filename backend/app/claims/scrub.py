@@ -536,15 +536,19 @@ def rendering_taxonomy_present(claim: Claim) -> list[Finding]:
     ]
 
 
+#: Not yet sent: the only states where "check before you send" is still true.
+_UNSENT_STATES = frozenset({"draft", "validated", "in_review"})
+
+
 def rendering_in_network(claim: Claim, status: str | None) -> list[Finding]:
-    """Warn when the clinician who held the visit has no contract with the payer.
+    """Warn, on an unsent claim, when the visit's clinician has no contract with the payer.
 
     ``status`` is their participation status (``billing_access.read_enrollment_status``),
     read by the caller because this module touches no database. ``None`` is
     not known, and warns of nothing. A warning, not a block: the practice may
     know something the panel record does not.
     """
-    if status is None or status in _CONTRACTED_STATUSES:
+    if claim.state not in _UNSENT_STATES or status is None or status in _CONTRACTED_STATUSES:
         return []
     rendering = claim.billing_snapshot.rendering_provider
     name = " ".join(n for n in (rendering.first_name, rendering.last_name) if n)

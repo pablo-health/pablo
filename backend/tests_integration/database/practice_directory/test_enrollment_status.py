@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Engine
 
+from app.db.practice_directory import ENROLLMENT_COLUMNS
+
 from .helpers import _A, _B, _ROLE, _as, _Chart, _chart, _drop, _new_schema
 
 _DB_URL = os.environ.get("DATABASE_URL", "")
@@ -183,6 +185,10 @@ def test_the_role_sees_only_its_own_practices_rows_through_the_policy(
         conn.execute(text("SET search_path = pg_catalog, pg_temp"))
         unpinned = conn.execute(text("SELECT count(*) FROM platform.payer_participations"))
         assert unpinned.scalar() == 0
+        conn.execute(text(f"SET search_path = pg_catalog, {visit['schema']}, pg_temp"))
+        conn.execute(text("SELECT set_config('app.current_user_id', '', true)"))
+        unarmed = conn.execute(text("SELECT count(*) FROM platform.payer_participations"))
+        assert unarmed.scalar() == 0
         conn.execute(text("RESET ROLE"))
     finally:
         conn.rollback()
@@ -201,10 +207,7 @@ def test_the_role_may_read_only_four_columns(engine: Engine, visit: dict[str, st
             {"role": _ROLE},
         ).all()
     assert [tuple(row) for row in columns] == [
-        ("payer_id", "SELECT"),
-        ("practice_id", "SELECT"),
-        ("status", "SELECT"),
-        ("user_id", "SELECT"),
+        (column, "SELECT") for column in sorted(ENROLLMENT_COLUMNS)
     ]
 
 

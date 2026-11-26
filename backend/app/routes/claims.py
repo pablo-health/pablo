@@ -761,6 +761,7 @@ def validate_claim(
     user: CurrentUser,
     claims: ClaimsRepo,
     patients: PatientsRepo,
+    enrollment: Enrollment,
     audit: AuditService = Depends(get_audit_service),
 ) -> ValidateClaimResponse:
     """Run the scrub; a clean claim becomes ``validated``, a blocked one stays a draft."""
@@ -779,7 +780,9 @@ def validate_claim(
             code="CLAIM_VALIDATION_FAILED",
         ) from exc
 
-    warnings = _to_findings(scrub(validated))
+    warnings = _to_findings(
+        [*scrub(validated), *rendering_in_network(validated, enrollment(validated))]
+    )
     saved = claims.update(validated)
     audit.log(
         AuditAction.CLAIM_VALIDATED,
