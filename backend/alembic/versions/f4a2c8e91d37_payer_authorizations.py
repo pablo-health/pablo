@@ -58,5 +58,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_payer_authorizations_user_id", table_name="payer_authorizations")
-    op.drop_table("payer_authorizations")
+    # The table now lives in ``platform``; an unqualified drop would take that
+    # copy. Its index goes with the table.
+    from app.db.practice_table_drop import drop_practice_table_sql  # noqa: PLC0415
+
+    op.execute(drop_practice_table_sql("payer_authorizations"))

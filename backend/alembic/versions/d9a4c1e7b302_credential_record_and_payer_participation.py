@@ -393,8 +393,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("payer_participation_events")
-    op.drop_table("payer_participations")
+    # These two now live in ``platform``; an unqualified drop would take those.
+    from app.db.practice_table_drop import drop_practice_table_sql  # noqa: PLC0415
+
+    op.execute(drop_practice_table_sql("payer_participation_events"))
+    op.execute(drop_practice_table_sql("payer_participations"))
     op.drop_table("credential_bank_accounts")
     op.drop_table("credential_service_locations")
     op.drop_table("credential_disclosures")
