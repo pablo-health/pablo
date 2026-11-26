@@ -1,0 +1,1843 @@
+{
+  "ceiling": 800,
+  "duplicates": {
+    "0037e6b82e9ed6df": [
+      "backend/app/jobs/pentest_audit.py:_id_token",
+      "backend/app/jobs/pentest_tenant.py:_id_token"
+    ],
+    "0115b2abed0d2119": [
+      "backend/app/services/availability_parse_service.py:_elapsed_ms",
+      "backend/evals/availability_parse/run.py:_elapsed_ms"
+    ],
+    "01549ee4667b9376": [
+      "backend/app/calendar_providers/oauth_state.py:_sign",
+      "backend/app/services/domain_connect_state.py:_sign"
+    ],
+    "051088e7a1d7f54e": [
+      "backend/scripts/regen_platform_schema.py:_bring_up_postgres",
+      "backend/scripts/regen_tenant_template.py:_bring_up_postgres"
+    ],
+    "064636a2a4f3baab": [
+      "deploy/vm/bin/pablo-update:fetch_release",
+      "deploy/vm/boot-stub.sh:fetch_release"
+    ],
+    "07ce69d375f64374": [
+      "backend/app/claims/acknowledgments.py:_processed_at",
+      "backend/app/claims/remittance_feed.py:_processed_at",
+      "backend/app/claims/status_worker.py:_processed_at"
+    ],
+    "094c4c3d9c6a3527": [
+      "backend/app/repositories/intake_blank_form.py:__init__",
+      "backend/app/repositories/intake_document.py:__init__",
+      "backend/app/repositories/patient_intake_signature.py:__init__",
+      "backend/app/repositories/session_dictation.py:__init__"
+    ],
+    "0a9c2726d67190d0": [
+      "backend/app/repositories/chat.py:revoke_access",
+      "backend/app/repositories/patient_message.py:revoke_access"
+    ],
+    "0cb006e91d6185f7": [
+      "backend/app/routes/compliance.py:list_compliance_templates",
+      "backend/app/routes/tasks.py:list_task_templates"
+    ],
+    "0dbfd51e0ec55b53": [
+      "backend/app/repositories/patient_preference.py:list_active",
+      "backend/app/repositories/postgres/patient_preference.py:list_active"
+    ],
+    "0f30765b166b0105": [
+      "backend/app/medications/repository.py:__init__",
+      "backend/app/repositories/diagnostic_assessment.py:__init__",
+      "backend/app/repositories/note.py:__init__",
+      "backend/app/repositories/outcome_measure.py:__init__"
+    ],
+    "10788a7ece273f8f": [
+      "backend/app/auth/patient_context.py:_unauthenticated",
+      "backend/app/portal/routes.py:_unauthenticated"
+    ],
+    "267f00c3612aa7c9": [
+      "backend/app/services/hpi_section_call.py:build_prompt",
+      "backend/app/services/psychotherapy_section_call.py:build_prompt",
+      "backend/app/services/risk_section_call.py:build_prompt"
+    ],
+    "2782550c893fcca3": [
+      "backend/app/repositories/postgres/audit.py:_is_uuid",
+      "backend/app/repositories/postgres/coverage.py:_is_uuid",
+      "backend/app/repositories/postgres/patient.py:_is_uuid",
+      "backend/app/repositories/postgres/session.py:_is_uuid"
+    ],
+    "3035b699c0cc3adf": [
+      "backend/app/claims/superbill.py:total_paid_cents",
+      "backend/app/payments/statement.py:total_paid_cents"
+    ],
+    "31806b877149c22b": [
+      "backend/app/routes/intake_packets.py:_optional_str",
+      "backend/app/routes/patient_intake_assignments.py:_optional_str",
+      "backend/app/services/patient_intake_export_service.py:_optional_str"
+    ],
+    "3566e6339d5abc00": [
+      "backend/app/services/intake_blank_form_service.py:_storage",
+      "backend/app/services/patient_documents_service.py:_storage"
+    ],
+    "3940c83427b2511e": [
+      "backend/app/services/patient_intake_assignment_service.py:__init__",
+      "backend/app/services/patient_intake_review_service.py:__init__"
+    ],
+    "3de942b04471ef69": [
+      "backend/app/services/intake_blank_form_service.py:__init__",
+      "backend/app/services/patient_documents_service.py:__init__"
+    ],
+    "3f2c82084ab28e29": [
+      "backend/app/auth/patient_context.py:_is_tenant_schema",
+      "backend/app/portal/routes.py:_is_tenant_schema"
+    ],
+    "41075f3a207e5454": [
+      "backend/app/repositories/postgres/patient_intake_artifact.py:_has_access",
+      "backend/app/repositories/postgres/patient_intake_assignment.py:_has_access",
+      "backend/app/repositories/postgres/patient_intake_submission.py:_has_access"
+    ],
+    "4c9b8a3e0f0b9cbd": [
+      "backend/app/medications/repository.py:_can_access",
+      "backend/app/repositories/chat.py:_can_access",
+      "backend/app/repositories/diagnostic_assessment.py:_can_access",
+      "backend/app/repositories/note.py:_can_access",
+      "backend/app/repositories/outcome_measure.py:_can_access",
+      "backend/app/repositories/patient_intake_assignment.py:_can_access",
+      "backend/app/repositories/patient_intake_submission.py:_can_access"
+    ],
+    "5305efff39112b22": [
+      "backend/app/claims/eligibility.py:_cents",
+      "backend/app/claims/sdk_timeline.py:_cents"
+    ],
+    "589527fbdff46fca": [
+      "backend/app/medications/repository.py:__init__",
+      "backend/app/repositories/diagnostic_assessment.py:__init__",
+      "backend/app/repositories/outcome_measure.py:__init__"
+    ],
+    "5d6a1c504035f656": [
+      "backend/app/services/agent_llm_gateway.py:_get_client",
+      "backend/app/services/chat_llm_gateway.py:_get_client",
+      "backend/app/services/ehr_navigation_service.py:_get_client",
+      "backend/app/services/embedding_service.py:_get_client"
+    ],
+    "5f1e3570d3cb9ef8": [
+      "backend/app/routes/practice_ai_notes_consent.py:get_ai_notes_consent_setting",
+      "backend/app/routes/practice_client_video_link.py:get_client_video_link_setting"
+    ],
+    "69677691ed793aa6": [
+      "scripts/fake_mail.py:__init__",
+      "scripts/fake_sms.py:__init__"
+    ],
+    "6d8274cd0b784626": [
+      "backend/app/routes/compliance.py:download_compliance_document",
+      "backend/app/routes/tasks.py:download_task_document"
+    ],
+    "6edd2da7be312c24": [
+      "backend/app/away/repository.py:__init__",
+      "backend/app/away/service.py:__init__",
+      "backend/app/diagnostics/definition_provider.py:__init__",
+      "backend/app/homework/repository.py:__init__",
+      "backend/app/portal/db_store.py:__init__",
+      "backend/app/repositories/postgres/allowlist.py:__init__",
+      "backend/app/repositories/postgres/appointment.py:__init__",
+      "backend/app/repositories/postgres/appointment_type.py:__init__",
+      "backend/app/repositories/postgres/audit.py:__init__",
+      "backend/app/repositories/postgres/availability_rule.py:__init__",
+      "backend/app/repositories/postgres/booking_link.py:__init__",
+      "backend/app/repositories/postgres/chart_history.py:__init__",
+      "backend/app/repositories/postgres/chart_proposals.py:__init__",
+      "backend/app/repositories/postgres/chat.py:__init__",
+      "backend/app/repositories/postgres/claim_receipts.py:__init__",
+      "backend/app/repositories/postgres/claims.py:__init__",
+      "backend/app/repositories/postgres/client_ai_consent.py:__init__",
+      "backend/app/repositories/postgres/clinician_profile.py:__init__",
+      "backend/app/repositories/postgres/companion_device.py:__init__",
+      "backend/app/repositories/postgres/compliance_document.py:__init__",
+      "backend/app/repositories/postgres/coverage.py:__init__",
+      "backend/app/repositories/postgres/coverage.py:__init__",
+      "backend/app/repositories/postgres/diagnostic_assessment.py:__init__",
+      "backend/app/repositories/postgres/ehr_prompt.py:__init__",
+      "backend/app/repositories/postgres/ehr_route.py:__init__",
+      "backend/app/repositories/postgres/external_calendar_event.py:__init__",
+      "backend/app/repositories/postgres/google_calendar_token.py:__init__",
+      "backend/app/repositories/postgres/ical_sync_config.py:__init__",
+      "backend/app/repositories/postgres/identity.py:__init__",
+      "backend/app/repositories/postgres/inbox_item_state.py:__init__",
+      "backend/app/repositories/postgres/instrument_license.py:__init__",
+      "backend/app/repositories/postgres/intake_blank_form.py:__init__",
+      "backend/app/repositories/postgres/intake_document.py:__init__",
+      "backend/app/repositories/postgres/intake_packet.py:__init__",
+      "backend/app/repositories/postgres/llm_usage.py:__init__",
+      "backend/app/repositories/postgres/medication.py:__init__",
+      "backend/app/repositories/postgres/note.py:__init__",
+      "backend/app/repositories/postgres/outcome_measure.py:__init__",
+      "backend/app/repositories/postgres/passkey_backup_code.py:__init__",
+      "backend/app/repositories/postgres/passkey_credential.py:__init__",
+      "backend/app/repositories/postgres/patient.py:__init__",
+      "backend/app/repositories/postgres/patient_document.py:__init__",
+      "backend/app/repositories/postgres/patient_intake_artifact.py:__init__",
+      "backend/app/repositories/postgres/patient_intake_assignment.py:__init__",
+      "backend/app/repositories/postgres/patient_intake_signature.py:__init__",
+      "backend/app/repositories/postgres/patient_intake_submission.py:__init__",
+      "backend/app/repositories/postgres/patient_message.py:__init__",
+      "backend/app/repositories/postgres/patient_payment.py:__init__",
+      "backend/app/repositories/postgres/patient_preference.py:__init__",
+      "backend/app/repositories/postgres/patient_problem.py:__init__",
+      "backend/app/repositories/postgres/patient_source_mapping.py:__init__",
+      "backend/app/repositories/postgres/platform_audit.py:__init__",
+      "backend/app/repositories/postgres/practice_admin.py:__init__",
+      "backend/app/repositories/postgres/practice_domain.py:__init__",
+      "backend/app/repositories/postgres/practice_note_type.py:__init__",
+      "backend/app/repositories/postgres/refill_request.py:__init__",
+      "backend/app/repositories/postgres/remittance_hold.py:__init__",
+      "backend/app/repositories/postgres/session.py:__init__",
+      "backend/app/repositories/postgres/session_dictation.py:__init__",
+      "backend/app/repositories/postgres/supervision.py:__init__",
+      "backend/app/repositories/postgres/task.py:__init__",
+      "backend/app/repositories/postgres/telehealth_connection.py:__init__",
+      "backend/app/repositories/postgres/user.py:__init__",
+      "backend/app/sites/store.py:__init__",
+      "backend/app/waitlist/repository.py:__init__"
+    ],
+    "6edeb5442371928b": [
+      "backend/evals/derive_meaning.py:share",
+      "backend/evals/run_derive.py:share"
+    ],
+    "704729877a58132b": [
+      "backend/app/repositories/audit.py:__init__",
+      "backend/app/repositories/platform_audit.py:__init__"
+    ],
+    "71608badc9ceb1b8": [
+      "backend/app/repositories/companion_device.py:list_for_user",
+      "backend/app/repositories/passkey_credential.py:list_for_user"
+    ],
+    "771eefaba151e061": [
+      "backend/app/medications/repository.py:grant_all_access",
+      "backend/app/repositories/chat.py:grant_all_access",
+      "backend/app/repositories/diagnostic_assessment.py:grant_all_access",
+      "backend/app/repositories/note.py:grant_all_access",
+      "backend/app/repositories/outcome_measure.py:grant_all_access",
+      "backend/app/repositories/patient_intake_assignment.py:grant_all_access",
+      "backend/app/repositories/patient_intake_submission.py:grant_all_access"
+    ],
+    "7a5a47d6ae68d3b2": [
+      "backend/app/services/intake_blank_form_service.py:__init__",
+      "backend/app/services/patient_documents_service.py:__init__"
+    ],
+    "83ffbe5fe9ad5784": [
+      "backend/app/routes/note_redraft.py:_is_final_attempt",
+      "backend/app/routes/notes.py:_is_final_note_generation_attempt",
+      "backend/app/routes/patient_documents.py:_is_final_finalize_attempt",
+      "backend/app/routes/session_dictations.py:_is_final_attempt",
+      "backend/app/routes/sessions.py:_is_final_soap_attempt"
+    ],
+    "858ed4654798e6ce": [
+      "backend/app/services/patient_intake_artifact_service.py:_parse",
+      "backend/app/services/patient_intake_assignment_service.py:_parse"
+    ],
+    "85a6807afca604f1": [
+      "backend/app/repositories/postgres/intake_packet.py:_optional_str",
+      "backend/app/routes/instrument_licenses.py:_optional_str",
+      "backend/app/services/intake_packet_service.py:_optional_str"
+    ],
+    "8cf7031896db2737": [
+      "backend/app/claims/superbill.py:_pairs",
+      "backend/app/payments/statement.py:_pairs"
+    ],
+    "90dc2cc8311a67d8": [
+      "backend/app/services/hpi_section_call.py:draft_sections",
+      "backend/app/services/psychotherapy_section_call.py:draft_sections"
+    ],
+    "9bfae3c54e992fb2": [
+      "backend/app/repositories/instrument_license.py:__init__",
+      "backend/app/repositories/practice_note_type.py:__init__"
+    ],
+    "9ee4bccfe3507609": [
+      "backend/app/services/agent_llm_gateway.py:__init__",
+      "backend/app/services/structured_llm_gateway.py:__init__"
+    ],
+    "a529eba034eea68c": [
+      "backend/app/services/hpi_section_call.py:_is_uncovered",
+      "backend/app/services/psychotherapy_section_call.py:_is_uncovered"
+    ],
+    "a90d87fb5dddcbef": [
+      "backend/app/services/assemblyai_transcription_service.py:_format_timestamp",
+      "services/transcription/worker.py:_format_timestamp"
+    ],
+    "a9e28b2502f2bf26": [
+      "backend/app/claims/assembly.py:_iso_date",
+      "backend/app/patients/matching.py:_parse_date"
+    ],
+    "b1081579a5916542": [
+      "backend/app/medications/repository.py:grant_access",
+      "backend/app/repositories/chat.py:grant_access",
+      "backend/app/repositories/diagnostic_assessment.py:grant_access",
+      "backend/app/repositories/note.py:grant_access",
+      "backend/app/repositories/outcome_measure.py:grant_access",
+      "backend/app/repositories/patient.py:grant_access",
+      "backend/app/repositories/patient_document.py:grant_access",
+      "backend/app/repositories/patient_intake_assignment.py:grant_access",
+      "backend/app/repositories/patient_intake_submission.py:grant_access",
+      "backend/app/repositories/patient_message.py:grant_access",
+      "backend/app/repositories/refill_request.py:grant_access",
+      "backend/app/repositories/session.py:grant_access",
+      "backend/app/scheduling_engine/repositories/appointment.py:grant_access"
+    ],
+    "b7b63cd75714793f": [
+      "backend/app/portal/practice_hosts.py:clear",
+      "backend/app/services/busy_time.py:clear",
+      "backend/app/services/domain_connect_discovery.py:clear"
+    ],
+    "badbd7aa79e7a2d8": [
+      "backend/app/services/patient_message_hooks.py:__init__",
+      "backend/app/services/refill_request_hooks.py:__init__"
+    ],
+    "bf3d7946fe4547ef": [
+      "backend/app/repositories/postgres/appointment.py:_has_patient_access",
+      "backend/app/repositories/postgres/chat.py:_has_access",
+      "backend/app/repositories/postgres/diagnostic_assessment.py:_has_access",
+      "backend/app/repositories/postgres/medication.py:_has_access",
+      "backend/app/repositories/postgres/note.py:_has_access",
+      "backend/app/repositories/postgres/outcome_measure.py:_has_access",
+      "backend/app/repositories/postgres/patient.py:_has_access",
+      "backend/app/repositories/postgres/patient_document.py:_has_patient_access",
+      "backend/app/repositories/postgres/patient_message.py:_has_access",
+      "backend/app/repositories/postgres/session.py:_has_patient_access"
+    ],
+    "c91f419049e4429c": [
+      "backend/evals/iterate_chat_prompt.py:_build_experiment_data",
+      "backend/evals/run_chat_experiment.py:_build_experiment_data"
+    ],
+    "cbc7e3e4791c5413": [
+      "backend/app/services/hpi_section_call.py:response_schema",
+      "backend/app/services/psychotherapy_section_call.py:response_schema",
+      "backend/app/services/risk_section_call.py:response_schema"
+    ],
+    "d1fff9894cb70e04": [
+      "scripts/fake_ical.py:health",
+      "scripts/fake_llm.py:health",
+      "scripts/fake_nppes.py:health",
+      "services/transcription/main.py:health"
+    ],
+    "d5929a2dc3d63679": [
+      "backend/app/services/instrument_license_service.py:_blank_to_none",
+      "backend/app/services/intake_packet_service.py:_blank_to_none"
+    ],
+    "d642b6aff2464de8": [
+      "backend/app/services/launch_intent_store.py:_prune",
+      "backend/app/services/passkey_challenge_store.py:_prune"
+    ],
+    "d8cfe3189246a7a5": [
+      "backend/app/repositories/patient.py:_can_access",
+      "backend/app/repositories/patient_message.py:_can_access",
+      "backend/app/repositories/session.py:_can_access",
+      "backend/app/scheduling_engine/repositories/appointment.py:_can_access"
+    ],
+    "da111afae3ef2096": [
+      "backend/app/models/audit.py:to_dict",
+      "backend/app/models/platform_audit.py:to_dict"
+    ],
+    "de4db560357d32bd": [
+      "backend/app/repositories/companion_device.py:__init__",
+      "backend/app/repositories/passkey_backup_code.py:__init__",
+      "backend/app/repositories/passkey_credential.py:__init__"
+    ],
+    "dfe1581c5f4f5abf": [
+      "backend/app/services/practice_domain_cloud.py:__init__",
+      "backend/app/sites/mirror.py:__init__"
+    ],
+    "e16000801df0d45d": [
+      "backend/app/chart_history/service.py:__init__",
+      "backend/app/homework/service.py:__init__",
+      "backend/app/medications/service.py:__init__",
+      "backend/app/outcome_measures/service.py:__init__",
+      "backend/app/preferences/service.py:__init__",
+      "backend/app/problems/service.py:__init__",
+      "backend/app/services/chat_service.py:__init__",
+      "backend/app/services/companion_device_service.py:__init__",
+      "backend/app/services/instrument_license_service.py:__init__",
+      "backend/app/services/intake_document_service.py:__init__",
+      "backend/app/services/platform_audit_service.py:__init__"
+    ],
+    "e28afa9f68403b20": [
+      "backend/app/repositories/intake_blank_form.py:add",
+      "backend/app/repositories/intake_document.py:add"
+    ],
+    "e52035dd36fa759d": [
+      "backend/app/claims/assembly.py:_text",
+      "backend/app/models/note_source.py:_text",
+      "backend/app/routes/patient_statements.py:_text"
+    ],
+    "eb91562edaf30951": [
+      "backend/app/repositories/coverage.py:__init__",
+      "backend/app/repositories/llm_usage.py:__init__",
+      "backend/app/repositories/patient_preference.py:__init__"
+    ],
+    "eef6e3ed0d25ba5d": [
+      "backend/app/services/hpi_section_call.py:_field_schema",
+      "backend/app/services/psychotherapy_section_call.py:_field_schema",
+      "backend/app/services/risk_section_call.py:_field_schema"
+    ],
+    "f05e06883b850824": [
+      "backend/app/claims/remittance_lines.py:delta_cents",
+      "backend/app/models/claims_holds.py:delta_cents"
+    ]
+  },
+  "exempt": {
+    "backend/app/claims/codes/carc.py": "Generated from X12's public Claim Adjustment Reason Codes list; it grows when X12 adds codes.",
+    "backend/app/claims/codes/rarc.py": "Generated from X12's public Remittance Advice Remark Codes list; it grows when X12 adds codes."
+  },
+  "sizes": {
+    "backend/app/auth/service.py": 1784,
+    "backend/app/chart_proposals/families.py": 881,
+    "backend/app/claims/eligibility.py": 954,
+    "backend/app/claims/enrollment.py": 911,
+    "backend/app/claims/superbill.py": 814,
+    "backend/app/db/__init__.py": 2412,
+    "backend/app/db/models.py": 5392,
+    "backend/app/db/platform_models.py": 2449,
+    "backend/app/db/practice_archive.py": 1033,
+    "backend/app/intake/export.py": 834,
+    "backend/app/jobs/pentest_collectors.py": 2635,
+    "backend/app/jobs/pentest_runner.py": 1253,
+    "backend/app/migration/apply.py": 847,
+    "backend/app/migration/readers/simplepractice.py": 969,
+    "backend/app/models/audit.py": 1078,
+    "backend/app/models/claims_transport.py": 981,
+    "backend/app/models/scheduling.py": 1268,
+    "backend/app/rate_limit.py": 903,
+    "backend/app/routes/claims.py": 907,
+    "backend/app/routes/coverage.py": 1259,
+    "backend/app/routes/internal_transcription.py": 1069,
+    "backend/app/routes/notes.py": 1016,
+    "backend/app/routes/patient_booking.py": 1104,
+    "backend/app/routes/patient_documents.py": 973,
+    "backend/app/routes/patient_intake_assignments.py": 1362,
+    "backend/app/routes/patient_messages.py": 1147,
+    "backend/app/routes/patient_payments.py": 1001,
+    "backend/app/routes/public_booking.py": 1376,
+    "backend/app/routes/scheduling.py": 2837,
+    "backend/app/routes/sessions.py": 2191,
+    "backend/app/routes/users.py": 1304,
+    "backend/app/scheduling_engine/services/availability.py": 1095,
+    "backend/app/scheduling_engine/services/scheduling.py": 907,
+    "backend/app/services/audit_service.py": 1013,
+    "backend/app/services/availability_parse_service.py": 985,
+    "backend/app/services/chat_context_bundler.py": 1431,
+    "backend/app/services/chat_turn_service.py": 896,
+    "backend/app/services/google_calendar_service.py": 2323,
+    "backend/app/services/ical_sync_service.py": 840,
+    "backend/app/services/note_generation_service.py": 1656,
+    "backend/app/services/note_import_service.py": 816,
+    "backend/app/services/outside_sessions.py": 1091,
+    "backend/app/services/patient_documents_service.py": 837,
+    "backend/app/services/practice_domain_reconciler.py": 813,
+    "backend/app/services/session_service.py": 1000,
+    "backend/app/services/structured_llm_gateway.py": 1058,
+    "backend/app/settings.py": 2624,
+    "backend/evals/availability_parse/cases.py": 966,
+    "backend/evals/note_templates/cases.py": 812,
+    "backend/evals/note_templates/scorers.py": 1081,
+    "backend/scripts/check_route_audit.py": 1115,
+    "frontend/src/components/calendar/AppointmentModal.tsx": 1293,
+    "frontend/src/components/sessions/NoteViewer.tsx": 807,
+    "frontend/src/components/settings/AvailabilitySettings.tsx": 1121,
+    "scripts/fake_clearinghouse.py": 1223,
+    "scripts/fake_llm.py": 948
+  },
+  "test_duplicates": {
+    "00c356b4ae0a319d": [
+      "backend/tests/test_file_storage.py:__init__",
+      "backend/tests/test_patient_documents_patient_api.py:__init__",
+      "backend/tests/test_patient_documents_service.py:__init__",
+      "backend/tests/test_routes_patient_documents.py:__init__"
+    ],
+    "0163cbcd16e02589": [
+      "backend/tests_integration/database/test_appointment_overlap_db.py:_user",
+      "backend/tests_integration/database/test_appointment_unique_slot_db.py:_user",
+      "backend/tests_integration/database/test_dashboard_repo_queries_integration.py:_user",
+      "backend/tests_integration/database/test_supervision_repository_integration.py:_user"
+    ],
+    "017af3d89deaf882": [
+      "backend/tests_integration/database/test_follow_a_chosen_calendar_migration.py:test_parent_revision_is_still_the_one_this_fixture_assumes",
+      "backend/tests_integration/database/test_google_created_calendars_migration.py:test_parent_revision_is_still_the_one_this_fixture_assumes",
+      "backend/tests_integration/database/test_practice_owned_answers_db.py:test_parent_revision_is_still_the_one_this_fixture_assumes",
+      "backend/tests_integration/database/test_tasks_migration.py:test_parent_revision_is_still_the_one_this_fixture_assumes"
+    ],
+    "0251386233725846": [
+      "backend/tests/test_general_ip_rate_limit.py:health",
+      "backend/tests/test_middleware.py:health"
+    ],
+    "02b0c4be1eb2a8cf": [
+      "backend/tests/test_db_middleware_unavailable.py:unreachable_engine",
+      "backend/tests/test_health_endpoint.py:unreachable_engine"
+    ],
+    "035c42c92fee3924": [
+      "backend/tests/test_busy_time.py:query",
+      "backend/tests/test_calendar_practice_import.py:query"
+    ],
+    "0497817d46c5fbc7": [
+      "backend/tests/test_intake_documents_api.py:_entries",
+      "backend/tests/test_patient_intake_assignments_api.py:_entries"
+    ],
+    "064bf48be8e3a0e4": [
+      "backend/tests_integration/database/test_answered_titles_migration.py:engine",
+      "backend/tests_integration/database/test_follow_a_chosen_calendar_migration.py:engine",
+      "backend/tests_integration/database/test_google_created_calendars_migration.py:engine",
+      "backend/tests_integration/database/test_imported_sessions_migration.py:engine",
+      "backend/tests_integration/database/test_patient_charge_method_backfill_rls.py:engine",
+      "backend/tests_integration/database/test_patient_message_thread_reads_migration.py:engine",
+      "backend/tests_integration/database/test_patient_source_mappings_migration.py:engine",
+      "backend/tests_integration/database/test_tasks_migration.py:engine"
+    ],
+    "06c72a18ee84a3eb": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_audit",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_audit",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_audit"
+    ],
+    "06fb01edced04e6f": [
+      "backend/tests/test_import_then_follow.py:_patient",
+      "backend/tests/test_practice_owned_answers.py:_patient"
+    ],
+    "077c41de176584ca": [
+      "backend/tests/test_file_storage.py:generate_signed_url",
+      "backend/tests/test_patient_documents_service.py:generate_signed_url"
+    ],
+    "0965b89e01bf1acd": [
+      "backend/tests/test_patient_payments.py:__init__",
+      "backend/tests/test_patient_write_offs.py:__init__"
+    ],
+    "0b17321d2cf9f150": [
+      "backend/tests_integration/api/test_session_liveness_no_database.py:redis",
+      "backend/tests_integration/database/test_practice_membership.py:redis"
+    ],
+    "0b92c1752f92e32c": [
+      "backend/tests_integration/api/test_credentialing_checklist_routes.py:engine",
+      "backend/tests_integration/api/test_enrollment_task_routes.py:engine",
+      "backend/tests_integration/api/test_panel_application_routes.py:engine",
+      "backend/tests_integration/api/test_payer_authorization_routes.py:engine",
+      "backend/tests_integration/api/test_payer_enrollment.py:engine",
+      "backend/tests_integration/api/test_payer_enrollment_routes.py:engine",
+      "backend/tests_integration/api/test_practice_billing_routes.py:engine",
+      "backend/tests_integration/api/test_task_routes.py:engine"
+    ],
+    "0b9a76f86a3e2258": [
+      "backend/tests/test_portal_auth_routes.py:_commit",
+      "backend/tests/test_portal_recovery_routes.py:_commit"
+    ],
+    "0c5c78f6c91d3eda": [
+      "backend/tests/test_chart_proposals.py:_reply",
+      "backend/tests/test_import_seeds_the_chart.py:_reply"
+    ],
+    "0ec70b78aa6d99c6": [
+      "backend/tests_integration/database/test_booking_hosts_db.py:rows",
+      "backend/tests_integration/database/test_client_sender_db.py:rows",
+      "backend/tests_integration/database/test_hosted_addresses_db.py:rows",
+      "backend/tests_integration/database/test_portal_hosts_db.py:rows",
+      "backend/tests_integration/database/test_practice_sites_db.py:rows"
+    ],
+    "104933c9e55317ed": [
+      "backend/tests/test_closed_loop_audit.py:_http",
+      "backend/tests/test_cross_tenant_idor.py:_http"
+    ],
+    "10d44c87d8062dbb": [
+      "backend/tests_integration/api/test_cross_patient_portal_routes.py:_target_date",
+      "backend/tests_integration/api/test_patient_booking_routes.py:_target_date"
+    ],
+    "130d1f73992ab0b6": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:caller",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:caller",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:caller",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:caller",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:caller"
+    ],
+    "130fae1d530a68d1": [
+      "backend/tests/test_intake_documents_api.py:_auth",
+      "backend/tests/test_patient_documents_patient_api.py:_auth",
+      "backend/tests/test_patient_intake_api.py:_auth",
+      "backend/tests/test_patient_intake_artifacts_api.py:_auth",
+      "backend/tests/test_patient_intake_assignments_api.py:_auth",
+      "backend/tests/test_patient_intake_signatures_api.py:_auth",
+      "backend/tests/test_patient_message_attachments_api.py:_auth",
+      "backend/tests/test_patient_messages_api.py:_auth",
+      "backend/tests/test_patient_profile_api.py:_auth",
+      "backend/tests/test_portal_account_routes.py:_auth",
+      "backend/tests/test_refill_requests_api.py:_auth",
+      "backend/tests/test_routes_patient_chat.py:_auth",
+      "backend/tests_integration/database/test_patient_idor_http.py:_auth"
+    ],
+    "14312445ecb95ce1": [
+      "backend/tests/test_remittance_hold_settle.py:_hold",
+      "backend/tests/test_remittance_holds.py:_a_hold"
+    ],
+    "152c2786d6ac6ad7": [
+      "backend/tests/test_patient_intake_assignment_service.py:assignments",
+      "backend/tests/test_patient_intake_assignments_api.py:assignments",
+      "backend/tests/test_patient_intake_review_service.py:assignments",
+      "backend/tests/test_patient_intake_signature_service.py:assignments",
+      "backend/tests/test_patient_intake_signatures_api.py:assignments"
+    ],
+    "156cdc2b637e8080": [
+      "backend/tests/test_chart_proposals.py:complete",
+      "backend/tests/test_import_seeds_the_chart.py:complete"
+    ],
+    "1756ae483594ee6e": [
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:test_all_four_policy_arms_are_present",
+      "backend/tests_integration/database/test_patient_messages_rls.py:test_all_four_policy_arms_are_present"
+    ],
+    "190064c02bde8fec": [
+      "backend/tests/test_hold_receiver.py:_posting",
+      "backend/tests/test_remittance_hold_settle.py:_posting"
+    ],
+    "192a1de8eac38155": [
+      "backend/tests/test_patient_payments.py:list_charges",
+      "backend/tests/test_patient_statement_route.py:list_charges",
+      "backend/tests/test_patient_write_offs.py:list_charges",
+      "backend/tests/test_superbills_routes.py:list_charges"
+    ],
+    "19512ad2284e9442": [
+      "backend/tests/test_patient_intake_api.py:resolve",
+      "backend/tests/test_patient_intake_assignments_api.py:resolve"
+    ],
+    "1bb6f0f60dcfc7eb": [
+      "backend/tests/test_claims_pipeline_ledger.py:list_charges",
+      "backend/tests/test_claims_remittance.py:list_charges",
+      "backend/tests/test_hold_receiver.py:list_charges",
+      "backend/tests/test_remittance_hold_settle.py:list_charges",
+      "backend/tests/test_remittance_holds.py:list_charges"
+    ],
+    "1fa2adac81e5cd0c": [
+      "backend/tests/test_chart_context.py:registry",
+      "backend/tests/test_empty_note_draft.py:registry"
+    ],
+    "1fc6f05c0f6b4403": [
+      "backend/tests_integration/database/test_booking_hosts_db.py:set_status",
+      "backend/tests_integration/database/test_portal_hosts_db.py:set_status"
+    ],
+    "2048a0a4941867fc": [
+      "backend/tests/test_patient_intake_signature_service.py:published",
+      "backend/tests/test_patient_intake_signatures_api.py:published"
+    ],
+    "2076c8f59940c5bb": [
+      "backend/tests/test_chart_proposals.py:chart_proposal_completion",
+      "backend/tests/test_import_seeds_the_chart.py:chart_proposal_completion"
+    ],
+    "216e9c401dbd0d76": [
+      "backend/tests/test_client_present_boundary.py:_standalone_db",
+      "backend/tests/test_session_audio_failure_event.py:_fake_db"
+    ],
+    "22bef992aae44d98": [
+      "backend/tests_integration/database/test_answered_titles_migration.py:_set_rls",
+      "backend/tests_integration/database/test_follow_a_chosen_calendar_migration.py:_set_rls",
+      "backend/tests_integration/database/test_google_created_calendars_migration.py:_set_rls",
+      "backend/tests_integration/database/test_imported_sessions_migration.py:_set_rls",
+      "backend/tests_integration/database/test_patient_message_thread_reads_migration.py:_set_rls",
+      "backend/tests_integration/database/test_patient_problems_db.py:_set_rls",
+      "backend/tests_integration/database/test_patient_source_mappings_migration.py:_set_rls",
+      "backend/tests_integration/database/test_practice_owned_answers_db.py:_set_rls"
+    ],
+    "22f52a4bd7127688": [
+      "backend/tests/test_patient_messages_api.py:send_notice",
+      "backend/tests/test_refill_requests_api.py:send_notice"
+    ],
+    "2315db0c5bac05f4": [
+      "backend/tests_integration/database/test_appointment_type_name_taken_db.py:_clinician",
+      "backend/tests_integration/database/test_appointment_type_place_db.py:_clinician"
+    ],
+    "23edb46b3c90b3fe": [
+      "backend/tests/test_patient_intake_export_api.py:_logged",
+      "backend/tests/test_patient_intake_review_api.py:_logged"
+    ],
+    "2725defe5e51865d": [
+      "backend/tests_integration/database/test_ask_clients_about_ai_notes_migration.py:_alembic",
+      "backend/tests_integration/database/test_send_clients_video_link_migration.py:_alembic"
+    ],
+    "275691f29550d0d7": [
+      "backend/tests_integration/database/test_adopt_intake_submissions.py:_row_security",
+      "backend/tests_integration/database/test_patient_charge_method_backfill_rls.py:_rls_flags"
+    ],
+    "28c41308bd4632b7": [
+      "backend/tests/test_patient_documents_patient_api.py:__init__",
+      "backend/tests/test_patient_documents_service.py:__init__",
+      "backend/tests/test_routes_patient_documents.py:__init__"
+    ],
+    "2a4add12dab860b5": [
+      "backend/tests/test_patient_documents_patient_api.py:portal",
+      "backend/tests/test_patient_intake_artifacts_api.py:portal",
+      "backend/tests/test_patient_intake_assignments_api.py:portal",
+      "backend/tests/test_patient_intake_review_api.py:portal",
+      "backend/tests/test_patient_intake_signatures_api.py:portal"
+    ],
+    "2a4c0cc6f357f908": [
+      "backend/tests/test_patient_documents_patient_api.py:__init__",
+      "backend/tests/test_routes_patient_documents.py:__init__"
+    ],
+    "2b51223f3209c3c8": [
+      "backend/tests/test_claims_remittance.py:harness",
+      "backend/tests/test_hold_receiver.py:harness",
+      "backend/tests/test_remittance_hold_settle.py:harness",
+      "backend/tests/test_remittance_holds.py:harness"
+    ],
+    "2b7f1aac8e2215d2": [
+      "backend/tests/test_export_archive.py:_unzip",
+      "backend/tests/test_practice_export.py:_unzip",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_unzip",
+      "backend/tests_integration/database/test_patient_export_real_rows.py:_unzip"
+    ],
+    "2c0bd360112fae6a": [
+      "backend/tests_integration/api/test_portal_recovery_rls.py:__init__",
+      "backend/tests_integration/api/test_portal_sign_in_e2e.py:__init__"
+    ],
+    "2d1b5617f7334353": [
+      "backend/tests/test_db_middleware_offload.py:_make_mock_session",
+      "backend/tests/test_tenant_session.py:_make_mock_session"
+    ],
+    "2d2032d6cd9e0b4a": [
+      "backend/tests/test_bedrock_structured_llm_gateway.py:__init__",
+      "backend/tests/test_empty_note_draft.py:__init__"
+    ],
+    "2f544b9dde04d623": [
+      "backend/tests/test_patient_intake_assignments_api.py:artifact_service",
+      "backend/tests/test_patient_intake_signatures_api.py:artifact_service"
+    ],
+    "3059688f3d23d829": [
+      "backend/tests/test_eligibility_summary.py:listeners",
+      "backend/tests_integration/api/test_claim_events.py:listeners"
+    ],
+    "317fc22c0cb21950": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_user",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_user",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_user",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_user",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_user"
+    ],
+    "31c995a66b8978bf": [
+      "backend/tests_integration/database/test_claim_pipeline_db.py:close",
+      "backend/tests_integration/database/test_contracted_rates_db.py:close",
+      "backend/tests_integration/database/test_credential_record_db.py:close",
+      "backend/tests_integration/database/test_credentialing_checklist_db.py:close",
+      "backend/tests_integration/database/test_payer_authorizations_db.py:close",
+      "backend/tests_integration/database/test_payer_enrollments_db.py:close"
+    ],
+    "329030e9ad4106dc": [
+      "backend/tests/test_hold_receiver.py:__init__",
+      "backend/tests_integration/api/test_session_liveness_no_database.py:__init__"
+    ],
+    "32d8f63ecb87dbb1": [
+      "backend/tests/test_patient_payments.py:__init__",
+      "backend/tests/test_user_status.py:__init__"
+    ],
+    "3365bc0c9f5ab10d": [
+      "backend/tests_integration/database/test_practice_domain_apexes_db.py:engine",
+      "backend/tests_integration/database/test_practice_domains_db.py:engine"
+    ],
+    "33b5bd68064da670": [
+      "backend/tests/test_practice_ai_notes_consent.py:_call",
+      "backend/tests/test_practice_client_video_link.py:_call"
+    ],
+    "344e4a582f11e2eb": [
+      "backend/tests_integration/database/test_claims_rls.py:_session",
+      "backend/tests_integration/database/test_prescribing_attestation_rls.py:_session",
+      "backend/tests_integration/database/test_prescribing_finalization_db.py:_session"
+    ],
+    "366fef8fb90fbe56": [
+      "backend/tests_integration/database/test_inbox_db.py:run",
+      "backend/tests_integration/database/test_patient_message_inbox_db.py:run"
+    ],
+    "36d1b8939d2c2498": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:make_download_url",
+      "backend/tests_integration/api/test_cross_patient_portal_routes.py:make_download_url"
+    ],
+    "3705eabd6ec4ce0f": [
+      "backend/tests_integration/api/test_chat_real_db.py:tenant_schema",
+      "backend/tests_integration/api/test_cross_clinician_chat_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_cross_clinician_path_body_mismatch.py:tenant_schema",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_google_calendar_disconnect_api.py:tenant_schema",
+      "backend/tests_integration/api/test_homework_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_hot_read_routes_release_connection.py:tenant_schema",
+      "backend/tests_integration/api/test_patients_api_e2e.py:tenant_schema",
+      "backend/tests_integration/api/test_restricted_note_companion_routes.py:tenant_schema",
+      "backend/tests_integration/api/test_waitlist_routes.py:tenant_schema",
+      "backend/tests_integration/database/test_patient_charges_db.py:tenant_schema"
+    ],
+    "37e4751f5250aad7": [
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_seed_patient",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_seed_patient"
+    ],
+    "38f5a6e1bbf8c0ad": [
+      "backend/tests/test_chat_turn_service.py:__init__",
+      "backend/tests/test_llm_usage_meter.py:__init__"
+    ],
+    "393722beb61c39ab": [
+      "backend/tests/test_claim_acknowledgments.py:harness",
+      "backend/tests/test_claim_status_worker.py:harness",
+      "backend/tests/test_claim_submit_worker.py:harness",
+      "backend/tests_integration/api/test_claim_watchdog.py:harness"
+    ],
+    "39585d37d95e15bd": [
+      "backend/tests_integration/api/test_reserved_address_resolution.py:_uid",
+      "backend/tests_integration/api/test_unverified_email_gate.py:_uid"
+    ],
+    "39f223195c015e5f": [
+      "backend/tests/test_portal_delivery.py:_clean_settings_and_registrations",
+      "backend/tests/test_portal_practice_hosts.py:_clean_settings_and_registrations"
+    ],
+    "3a002b8226bfce46": [
+      "backend/tests/test_audit_registered_coalescing.py:__init__",
+      "backend/tests/test_patient_intake_clinician_read.py:__init__",
+      "backend/tests/test_rate_limit.py:__init__"
+    ],
+    "3a55d10b5dd6ee52": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_user_now",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_user_now",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_user_now",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_user_now",
+      "backend/tests_integration/api/test_cross_clinician_path_body_mismatch.py:_user_now",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_user_now"
+    ],
+    "3a5d5910bed323a8": [
+      "backend/tests_integration/database/test_request_burst_pool_wedge.py:probe_schema",
+      "backend/tests_integration/database/test_request_session_prelude_transaction.py:probe_schema"
+    ],
+    "3aa33387673b997f": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_as",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_as",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_as",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_as",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_as"
+    ],
+    "3b065515e9d9a257": [
+      "backend/tests/test_patient_intake_artifacts_api.py:resolve",
+      "backend/tests/test_patient_intake_signatures_api.py:resolve"
+    ],
+    "3d0b285323dfcee5": [
+      "backend/tests/conftest.py:admin_user",
+      "backend/tests/test_admin_routes.py:admin_user"
+    ],
+    "3d8a80b8e8202479": [
+      "backend/tests_integration/database/test_claim_pipeline_db.py:__init__",
+      "backend/tests_integration/database/test_contracted_rates_db.py:__init__",
+      "backend/tests_integration/database/test_credential_record_db.py:__init__",
+      "backend/tests_integration/database/test_credentialing_checklist_db.py:__init__",
+      "backend/tests_integration/database/test_payer_authorizations_db.py:__init__",
+      "backend/tests_integration/database/test_payer_enrollments_db.py:__init__"
+    ],
+    "3e252a8e73c61abd": [
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_close_session",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_close_session",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_close_session",
+      "backend/tests_integration/database/test_patient_export_real_rows.py:_close_session",
+      "backend/tests_integration/database/test_practice_export_real_rows.py:_close_session"
+    ],
+    "3e6e81608daa6902": [
+      "backend/tests_integration/database/test_identity_race.py:engine",
+      "backend/tests_integration/database/test_practice_edition.py:engine"
+    ],
+    "3eb701969e0d5f80": [
+      "backend/tests/conftest.py:mock_audit_service",
+      "backend/tests/test_admin_routes.py:mock_audit_service"
+    ],
+    "40b5a69fcee0457a": [
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:assignments",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:assignments",
+      "backend/tests_integration/database/test_patient_intake_review_rls.py:assignments"
+    ],
+    "41b99a2bb334e01e": [
+      "backend/tests_integration/database/test_note_children_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_notes_restricted_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_owner_scoped_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_documents_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_intake_clinician_read_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_intake_review_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_intake_routes_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_messages_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_patient_principal_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_refill_requests_rls.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_rls_reconcile_on_migrate.py:test_connecting_role_does_not_bypass_rls",
+      "backend/tests_integration/database/test_tenant_export_restricted_notes.py:test_connecting_role_does_not_bypass_rls"
+    ],
+    "41c8607d15434412": [
+      "backend/tests_integration/api/test_credentialing_checklist_routes.py:_encryption_key",
+      "backend/tests_integration/api/test_enrollment_task_routes.py:_encryption_key",
+      "backend/tests_integration/api/test_payer_enrollment.py:_encryption_key",
+      "backend/tests_integration/api/test_payer_enrollment_routes.py:_encryption_key",
+      "backend/tests_integration/api/test_practice_billing_routes.py:_encryption_key",
+      "backend/tests_integration/database/test_external_calendar_events_db.py:_encryption_key"
+    ],
+    "440af150c00e531b": [
+      "backend/tests_integration/database/rls_apply/helpers.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_documents_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_intake_review_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_patient_messages_rls.py:_drop_schema",
+      "backend/tests_integration/database/test_portal_auth_store.py:_drop_schema",
+      "backend/tests_integration/database/test_rls_reconcile_on_migrate.py:_drop_schema",
+      "backend/tests_integration/database/test_rls_template_parity.py:_drop_schema"
+    ],
+    "44dbe88e773318ef": [
+      "backend/tests/test_outside_session_routes.py:_follow",
+      "backend/tests/test_outside_sessions_google.py:_follow"
+    ],
+    "45285eb806e7e34a": [
+      "backend/tests/test_domain_connect_discovery.py:__call__",
+      "backend/tests/test_domain_connect_routes.py:__call__"
+    ],
+    "45bc81d903cf63fc": [
+      "backend/tests/test_site_header.py:_skipped",
+      "backend/tests/test_site_theme.py:_skipped"
+    ],
+    "45d3e63278fc3d24": [
+      "backend/tests/test_coverage_routes.py:get",
+      "backend/tests/test_patient_payments.py:get",
+      "backend/tests/test_patient_write_offs.py:get"
+    ],
+    "463f15c7095b0cf1": [
+      "backend/tests_integration/database/test_claims_rls.py:_release",
+      "backend/tests_integration/database/test_client_ai_consent_rls.py:_release",
+      "backend/tests_integration/database/test_patient_coverage_rls.py:_release"
+    ],
+    "46d5ea20d65beb35": [
+      "backend/tests_integration/database/test_appointment_no_overlap_db.py:session",
+      "backend/tests_integration/database/test_appointment_overlap_db.py:session",
+      "backend/tests_integration/database/test_appointment_type_name_taken_db.py:session",
+      "backend/tests_integration/database/test_appointment_type_place_db.py:session",
+      "backend/tests_integration/database/test_appointment_unique_slot_db.py:session",
+      "backend/tests_integration/database/test_dashboard_repo_queries_integration.py:session",
+      "backend/tests_integration/database/test_supervision_repository_integration.py:session",
+      "backend/tests_integration/database/test_telehealth_columns_db.py:session"
+    ],
+    "4779f0bb57bf51ce": [
+      "backend/tests/test_chat_context_bundler_doc_eval.py:notes_repo",
+      "backend/tests/test_chat_turn_service.py:notes_repo",
+      "backend/tests/test_note_redraft.py:notes_repo"
+    ],
+    "480b244c731f6a94": [
+      "backend/tests_integration/api/test_cross_clinician_chat_routes.py:_user",
+      "backend/tests_integration/api/test_cross_clinician_path_body_mismatch.py:_user"
+    ],
+    "487c5faacbd1170f": [
+      "backend/tests/test_patient_intake_artifacts_api.py:assignment",
+      "backend/tests/test_patient_intake_coverage_api.py:assignment",
+      "backend/tests/test_patient_intake_signatures_api.py:assignment"
+    ],
+    "4a0f55d2a7e05919": [
+      "backend/tests_integration/api/test_payer_enrollment_routes.py:clearinghouse",
+      "backend/tests_integration/api/test_practice_billing_routes.py:clearinghouse"
+    ],
+    "4b536a1ccc7d2035": [
+      "backend/tests_integration/database/test_patient_documents_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_patient_intake_review_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_patient_messages_rls.py:_reapply_policies",
+      "backend/tests_integration/database/test_portal_auth_store.py:_reapply_policies"
+    ],
+    "4c8777f0c8c05143": [
+      "backend/tests/test_google_calendar.py:_set_encryption_key",
+      "backend/tests/test_practice_billing_profile.py:_set_encryption_key"
+    ],
+    "4df394cc8b5bfaca": [
+      "backend/tests/test_billing_queue.py:_271_with_copay",
+      "backend/tests/test_patient_payments.py:_271_with_copay"
+    ],
+    "4e150165c5439515": [
+      "backend/tests/test_closed_loop_audit.py:_make_http",
+      "backend/tests/test_cross_tenant_idor.py:_make_http"
+    ],
+    "51323f3528dca3eb": [
+      "backend/tests_integration/api/test_reserved_address_resolution.py:_code",
+      "backend/tests_integration/api/test_unverified_email_gate.py:_code"
+    ],
+    "517556d798ca1e95": [
+      "backend/tests/claims_pipeline_fakes.py:fixture",
+      "backend/tests/enrollment_fakes.py:fixture"
+    ],
+    "52aeddcfc335f97e": [
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_second_version",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_second_version",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_second_version"
+    ],
+    "530b88ef45288707": [
+      "backend/tests/test_inbox_api.py:_entries",
+      "backend/tests/test_instrument_licenses_api.py:_entries",
+      "backend/tests/test_intake_packets_api.py:_entries",
+      "backend/tests/test_patient_message_attachments_api.py:_entries",
+      "backend/tests/test_patient_message_inbox_api.py:_entries",
+      "backend/tests/test_patient_messages_api.py:_entries",
+      "backend/tests/test_refill_requests_api.py:_entries"
+    ],
+    "548a536003508ac0": [
+      "backend/tests/test_patient_intake_signature_service.py:packet_service",
+      "backend/tests/test_patient_intake_signatures_api.py:packet_service"
+    ],
+    "563e4dbbd066a6ba": [
+      "backend/tests/test_patient_intake_export_api.py:measures",
+      "backend/tests/test_patient_intake_review_api.py:measures"
+    ],
+    "564c96b13570685b": [
+      "backend/tests_integration/database/test_external_calendar_events_db.py:as_clinician",
+      "backend/tests_integration/database/test_google_calendar_disconnect_db.py:sessions"
+    ],
+    "568f7abdf33cd745": [
+      "backend/tests/test_billing_period_export.py:_rows",
+      "backend/tests/test_claim_export.py:_rows",
+      "backend/tests/test_claims_export_routes.py:_rows"
+    ],
+    "5789167c5ed13022": [
+      "backend/tests/test_patient_documents_service.py:settings",
+      "backend/tests/test_routes_patient_documents.py:documents_settings"
+    ],
+    "57dd2b507877e83e": [
+      "backend/tests/test_superbill.py:forbidden",
+      "backend/tests/test_superbills_routes.py:forbidden"
+    ],
+    "58308cc8187dc242": [
+      "backend/tests/test_audit_batched.py:user",
+      "backend/tests/test_audit_service.py:test_user"
+    ],
+    "59659593f81f07f8": [
+      "backend/tests/test_patient_intake_coverage_api.py:__init__",
+      "backend/tests/test_public_booking_routes.py:__init__",
+      "backend/tests/test_refill_requests_api.py:__init__",
+      "backend/tests/test_refill_requests_api.py:__init__",
+      "backend/tests/test_routes_launch.py:__init__"
+    ],
+    "596926da534d3361": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_memory_storage",
+      "backend/tests_integration/api/test_cross_patient_portal_routes.py:_memory_storage"
+    ],
+    "59e8e39ac61363da": [
+      "backend/tests/test_practice_balances.py:_user",
+      "backend/tests_integration/api/test_panel_application_routes.py:_user"
+    ],
+    "5b6a29bbe916ff9f": [
+      "backend/tests/test_chart_fields.py:_strings",
+      "backend/tests/test_note_generation_stand_in.py:_strings"
+    ],
+    "5cd83eafa7259b85": [
+      "backend/tests/test_api_errors.py:boom",
+      "backend/tests/test_request_context_middleware.py:boom"
+    ],
+    "5dbd8ba585bcb44a": [
+      "backend/tests/test_patient_statement_route.py:__init__",
+      "backend/tests/test_practice_balances.py:__init__",
+      "backend/tests/test_superbills_routes.py:__init__"
+    ],
+    "5e79f2ffd5507d10": [
+      "backend/tests/test_payer_enrollment_refresh_job.py:close",
+      "backend/tests/test_portal_practice_routes.py:close"
+    ],
+    "5ed29a70fda00910": [
+      "backend/tests/test_patient_payments.py:get",
+      "backend/tests/test_patient_write_offs.py:get"
+    ],
+    "5faa60a94f1d709b": [
+      "backend/tests/test_mfa_enforcement_guardrails.py:_has_dependency",
+      "backend/tests/test_subscription_readonly_route_matrix.py:_has_dependency"
+    ],
+    "5ffd052c46e2730a": [
+      "backend/tests_integration/database/test_prescribing_attestation_rls.py:encounter",
+      "backend/tests_integration/database/test_prescribing_finalization_db.py:encounter"
+    ],
+    "619b1aed2fe492ad": [
+      "backend/tests/test_billing_report_route.py:list_all_charges",
+      "backend/tests/test_practice_balances.py:list_all_charges"
+    ],
+    "61c0c72a4a541b99": [
+      "backend/tests/test_routes_compliance.py:create",
+      "backend/tests/test_routes_compliance_documents.py:create"
+    ],
+    "641c47fc684a1d96": [
+      "backend/tests/test_audit_batched.py:__init__",
+      "backend/tests/test_audit_registered_coalescing.py:__init__"
+    ],
+    "64aed7e2580adf4b": [
+      "backend/tests_integration/database/test_practice_export_real_rows.py:_arm",
+      "backend/tests_integration/database/test_tenant_export_restricted_notes.py:_arm"
+    ],
+    "656dd4f171b899a6": [
+      "backend/tests_integration/database/test_patient_documents_rls.py:_unarmed",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_unarmed",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_unarmed",
+      "backend/tests_integration/database/test_patient_intake_routes_rls.py:_unarmed",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_unarmed",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:_unarmed",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:_unarmed",
+      "backend/tests_integration/database/test_patient_messages_rls.py:_unarmed",
+      "backend/tests_integration/database/test_refill_requests_rls.py:_unarmed"
+    ],
+    "6591cbce667dae4c": [
+      "backend/tests_integration/database/test_note_chart_proposals_db.py:engine",
+      "backend/tests_integration/database/test_patient_chart_history_db.py:engine",
+      "backend/tests_integration/database/test_patient_medications_db.py:engine",
+      "backend/tests_integration/database/test_patient_preferences_db.py:engine",
+      "backend/tests_integration/database/test_patient_problems_db.py:engine",
+      "backend/tests_integration/database/test_session_task_proposals_db.py:engine"
+    ],
+    "66501579651ed115": [
+      "backend/tests_integration/api/test_cross_clinician_chat_routes.py:_armed",
+      "backend/tests_integration/api/test_cross_clinician_path_body_mismatch.py:_armed"
+    ],
+    "6689121301097c59": [
+      "backend/tests_integration/database/test_note_chart_proposals_db.py:_session",
+      "backend/tests_integration/database/test_patient_chart_history_db.py:_session",
+      "backend/tests_integration/database/test_patient_medications_db.py:_session",
+      "backend/tests_integration/database/test_patient_preferences_db.py:_session",
+      "backend/tests_integration/database/test_patient_problems_db.py:_session"
+    ],
+    "671c1124780479a3": [
+      "backend/tests/test_generation_fallback.py:_registry",
+      "backend/tests/test_practice_ai_notes_consent.py:_registry"
+    ],
+    "676c2260ba320640": [
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:test_table_present_with_rls_forced_and_a_policy",
+      "backend/tests_integration/database/test_patient_messages_rls.py:test_table_present_with_rls_forced_and_a_policy"
+    ],
+    "682f6931789d5a8b": [
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_assign",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_assign"
+    ],
+    "6842c36c2eedf13e": [
+      "backend/tests/test_instrument_licenses_api.py:test_without_a_credential_is_401",
+      "backend/tests/test_intake_packets_api.py:test_without_a_credential_is_401"
+    ],
+    "68ea257e93b46387": [
+      "backend/tests/test_anthropic_vertex_chat_llm_gateway.py:set_token_usage",
+      "backend/tests/test_structured_llm_gateway.py:set_token_usage"
+    ],
+    "68f4770268c5e074": [
+      "backend/tests/test_patient_payments.py:credentials_for_practice",
+      "backend/tests/test_user_status.py:credentials_for_practice"
+    ],
+    "6a31a349a41ca57e": [
+      "backend/tests/test_chart_proposals_api.py:chart_proposal_completion",
+      "backend/tests/test_intake_chart_proposals.py:chart_proposal_completion"
+    ],
+    "6a3cad5651b2ddb0": [
+      "backend/tests/test_audit_batched.py:pipeline",
+      "backend/tests/test_audit_registered_coalescing.py:pipeline"
+    ],
+    "6b62d6ec95b97d8e": [
+      "backend/tests/test_google_meet_conference.py:an_appointment",
+      "backend/tests/test_telehealth_seam.py:an_appointment"
+    ],
+    "6cd8e2597885ce42": [
+      "backend/tests/test_audit_batched.py:set",
+      "backend/tests/test_patient_intake_clinician_read.py:set"
+    ],
+    "6e970c54d0c5d091": [
+      "backend/tests_integration/api/test_portal_recovery_rls.py:_app_imported",
+      "backend/tests_integration/api/test_portal_sign_in_e2e.py:_app_imported",
+      "backend/tests_integration/database/test_portal_cross_practice_isolation.py:_app_imported"
+    ],
+    "6f0c78340e4f3de8": [
+      "backend/tests/test_anthropic_vertex_chat_llm_gateway.py:__init__",
+      "backend/tests/test_structured_llm_gateway.py:__init__"
+    ],
+    "6f8835722d95c485": [
+      "backend/tests/test_feed_titles.py:_calendar_key",
+      "backend/tests/test_import_then_follow.py:_calendar_key",
+      "backend/tests/test_outside_session_routes.py:_calendar_key",
+      "backend/tests/test_outside_sessions.py:_calendar_key",
+      "backend/tests/test_outside_sessions_google.py:_calendar_key",
+      "backend/tests/test_patient_matching.py:_calendar_key",
+      "backend/tests/test_practice_wide_matching.py:_calendar_key",
+      "backend/tests_integration/database/test_answered_titles_migration.py:_calendar_key"
+    ],
+    "700b61fd282fbdc8": [
+      "backend/tests/test_file_storage.py:blob",
+      "backend/tests/test_patient_documents_patient_api.py:blob",
+      "backend/tests/test_patient_documents_service.py:blob",
+      "backend/tests/test_routes_patient_documents.py:blob"
+    ],
+    "7019b907873c54ce": [
+      "backend/tests/test_patient_intake_review_api.py:_wire_portal_address",
+      "backend/tests/test_patient_messages_api.py:_wire_portal_address",
+      "backend/tests/test_refill_requests_api.py:_wire_portal_address"
+    ],
+    "71048d8d90997451": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:list_names",
+      "backend/tests_integration/api/test_cross_patient_portal_routes.py:list_names"
+    ],
+    "71bbdacdcc4b7d73": [
+      "backend/tests/test_coverage_routes.py:__init__",
+      "backend/tests/test_patient_write_offs.py:__init__"
+    ],
+    "728fa4f3e901749d": [
+      "backend/tests/test_ai_efforts.py:_no_db_guard",
+      "backend/tests/test_anthropic_vertex_chat_llm_gateway.py:_no_db_guard",
+      "backend/tests/test_chat_failover.py:_no_db_guard"
+    ],
+    "72c64b1b9f244e34": [
+      "backend/tests/test_busy_time.py:__init__",
+      "backend/tests/test_portal_practice_hosts.py:__init__",
+      "backend/tests/test_structured_llm_gateway.py:__init__",
+      "backend/tests_integration/database/test_booking_hosts_db.py:__init__",
+      "backend/tests_integration/database/test_portal_hosts_db.py:__init__",
+      "backend/tests_integration/database/test_practice_sites_db.py:__init__"
+    ],
+    "73173e49b2bf8b28": [
+      "backend/tests_integration/database/practice_directory/helpers.py:_new_schema",
+      "backend/tests_integration/database/rls_apply/helpers.py:_new_schema",
+      "backend/tests_integration/database/test_patient_documents_rls.py:_new_schema",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_new_schema",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_new_schema",
+      "backend/tests_integration/database/test_patient_intake_review_rls.py:_new_schema",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_new_schema",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:_new_schema",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:_new_schema",
+      "backend/tests_integration/database/test_patient_messages_rls.py:_new_schema",
+      "backend/tests_integration/database/test_rls_reconcile_on_migrate.py:_new_schema"
+    ],
+    "76f3f70837218eb9": [
+      "backend/tests/test_chart_fields.py:_spec",
+      "backend/tests/test_hpi_section_call.py:_spec",
+      "backend/tests/test_psychotherapy_section_call.py:_spec",
+      "backend/tests/test_risk_section_call.py:_spec"
+    ],
+    "7808e283a6162eb0": [
+      "backend/tests/test_patient_message_attachments_api.py:no_hooks",
+      "backend/tests/test_patient_messages_api.py:no_hooks"
+    ],
+    "790519767d3c1e63": [
+      "backend/tests_integration/database/test_patient_intake_clinician_read_rls.py:_close",
+      "backend/tests_integration/database/test_prescribing_attestation_rls.py:_close",
+      "backend/tests_integration/database/test_prescribing_finalization_db.py:_close"
+    ],
+    "7b66832021a2990d": [
+      "backend/tests/test_practice_domains_routes.py:_code",
+      "backend/tests/test_practice_site_routes.py:_code"
+    ],
+    "7c8767b58cc337f7": [
+      "backend/tests/test_auth_routes.py:_mock_firebase",
+      "backend/tests/test_version_check.py:_mock_firebase"
+    ],
+    "7d4495e3fd441324": [
+      "backend/tests/test_access_line_outcome.py:_reset_contextvars",
+      "backend/tests/test_log_request_identity.py:_reset_contextvars",
+      "backend/tests/test_logging_config.py:_reset_contextvars",
+      "backend/tests/test_request_context_middleware.py:_reset_contextvars"
+    ],
+    "7d95553452f78645": [
+      "backend/tests_integration/api/test_cross_clinician_chat_routes.py:_tenant_context",
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_tenant_context",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_tenant_context",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_tenant_context",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_tenant_context",
+      "backend/tests_integration/api/test_cross_clinician_path_body_mismatch.py:_tenant_context",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_tenant_context"
+    ],
+    "80f1f3d6bac3408b": [
+      "backend/tests_integration/database/test_booking_link_tombstone_db.py:engine",
+      "backend/tests_integration/database/test_launch_intent_store.py:engine"
+    ],
+    "83e6eedc85424abe": [
+      "backend/tests/test_import_note_type_route.py:_note_file",
+      "backend/tests/test_import_session_event_loop.py:_note_file"
+    ],
+    "83efece21845adc5": [
+      "backend/tests/test_busy_time.py:calendar_service",
+      "backend/tests/test_calendar_practice_import.py:calendar_service"
+    ],
+    "84fdde3d037aa93a": [
+      "backend/tests/test_portal_hosted.py:_fresh_settings",
+      "backend/tests_integration/database/test_public_booking_tenant_scope_db.py:_fresh_settings"
+    ],
+    "85101dd14c4285a3": [
+      "backend/tests_integration/database/test_external_calendar_events_db.py:_session",
+      "backend/tests_integration/database/test_practice_owned_answers_db.py:_session"
+    ],
+    "86e609944dbde270": [
+      "backend/tests_integration/database/test_patient_documents_rls.py:test_no_principal_armed_sees_nothing",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:test_no_principal_armed_sees_nothing",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:test_no_principal_armed_sees_nothing"
+    ],
+    "88f8a99c0977b440": [
+      "backend/tests/test_patient_intake_coverage_api.py:_auth",
+      "backend/tests/test_patient_intake_review_api.py:_auth"
+    ],
+    "89e29689840f0d28": [
+      "backend/tests_integration/api/test_away_acknowledgment.py:_tenant_context",
+      "backend/tests_integration/api/test_homework_routes.py:_tenant_context",
+      "backend/tests_integration/api/test_waitlist_routes.py:_tenant_context"
+    ],
+    "8a30153e21a9cc5e": [
+      "backend/tests/test_hpi_section_call.py:_shape",
+      "backend/tests/test_psychotherapy_section_call.py:_shape",
+      "backend/tests/test_risk_section_call.py:_shape"
+    ],
+    "8a46c1c9fd4b17a0": [
+      "backend/tests_integration/api/test_patient_booking_routes.py:_clear_engine_caches",
+      "backend/tests_integration/database/test_nested_pool_contract.py:_clear_engine_caches",
+      "backend/tests_integration/database/test_request_burst_pool_wedge.py:_clear_engine_caches"
+    ],
+    "8a9f0f7437d9fff7": [
+      "backend/tests/test_intake_items.py:restricted_gad7",
+      "backend/tests/test_intake_packets_api.py:restricted_gad7"
+    ],
+    "8aa3cde51a158de1": [
+      "backend/tests/test_patient_payments.py:commit",
+      "backend/tests/test_payment_webhook.py:commit"
+    ],
+    "8d7b927dadb69609": [
+      "backend/tests/test_practice_admin_routes.py:acting",
+      "backend/tests/test_practice_invite_routes.py:acting",
+      "backend/tests/test_software_update_routes.py:acting"
+    ],
+    "8e4beb28a043846d": [
+      "backend/tests/test_upload_naive_session_date.py:_no_queue",
+      "backend/tests/test_upload_session_note_type.py:_no_queue"
+    ],
+    "8e5c44381acd58e7": [
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_open_session",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_open_session",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_open_session"
+    ],
+    "8e972de1880efcd1": [
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:test_template_and_chain_produce_the_same_table",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:test_template_and_chain_produce_the_same_table",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:test_template_and_chain_produce_the_same_table",
+      "backend/tests_integration/database/test_patient_messages_rls.py:test_template_and_chain_produce_the_same_table",
+      "backend/tests_integration/database/test_portal_auth_store.py:test_template_and_chain_produce_the_same_table"
+    ],
+    "8f74ce054993404d": [
+      "backend/tests/test_practice_admin_routes.py:gated",
+      "backend/tests_integration/api/test_practice_admin_routes.py:gated"
+    ],
+    "8f7b7ec89392a11f": [
+      "backend/tests_integration/database/test_follow_a_chosen_calendar_migration.py:_downgrade",
+      "backend/tests_integration/database/test_google_created_calendars_migration.py:_downgrade",
+      "backend/tests_integration/database/test_practice_owned_answers_db.py:_downgrade"
+    ],
+    "9115df04ea080203": [
+      "backend/tests_integration/database/test_inbox_db.py:connect",
+      "backend/tests_integration/database/test_patient_message_inbox_db.py:connect"
+    ],
+    "91a510d5400b9ad0": [
+      "backend/tests_integration/api/test_coverage.py:_scoped",
+      "backend/tests_integration/api/test_covering_grant_expiry_routes.py:_scoped",
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_scoped",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_scoped"
+    ],
+    "920a54a7a97cc15f": [
+      "backend/tests/test_file_storage.py:upload_from_string",
+      "backend/tests/test_patient_documents_patient_api.py:upload_from_string",
+      "backend/tests/test_patient_documents_service.py:upload_from_string",
+      "backend/tests/test_routes_patient_documents.py:upload_from_string"
+    ],
+    "9223f15b1880b713": [
+      "backend/tests_integration/api/test_cross_clinician_chat_routes.py:_stash_identity",
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_stash_identity",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_stash_identity",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_stash_identity",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_stash_identity",
+      "backend/tests_integration/api/test_cross_clinician_path_body_mismatch.py:_stash_identity",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_stash_identity"
+    ],
+    "92c688248fa43b4b": [
+      "backend/tests_integration/database/test_credential_record_db.py:_encryption_key",
+      "backend/tests_integration/database/test_payer_enrollments_db.py:_encryption_key"
+    ],
+    "92dc309aa26c4aae": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:fetch_metadata",
+      "backend/tests_integration/api/test_cross_patient_portal_routes.py:fetch_metadata"
+    ],
+    "94a7c8f5c191cf3c": [
+      "backend/tests/test_bedrock_structured_llm_gateway.py:executor",
+      "backend/tests/test_hedged_structured_llm_gateway.py:executor"
+    ],
+    "95e6cbaabb98c2c8": [
+      "backend/tests/test_patient_documents_patient_api.py:_stash_clinician_identity",
+      "backend/tests/test_patient_intake_signatures_api.py:_stash_clinician_identity"
+    ],
+    "97563b73d154a588": [
+      "backend/tests_integration/database/test_patient_documents_rls.py:test_stranger_clinician_sees_nothing",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:test_stranger_clinician_sees_nothing",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:test_stranger_clinician_sees_nothing"
+    ],
+    "98294c30be12789e": [
+      "backend/tests_integration/database/test_contracted_rates_db.py:_user",
+      "backend/tests_integration/database/test_credential_record_db.py:_user",
+      "backend/tests_integration/database/test_credentialing_checklist_db.py:_user"
+    ],
+    "986d5fbf08b9a2e8": [
+      "backend/tests_integration/api/test_chat_real_db.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_covering_grant_expiry_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_clinician_chat_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_clinician_path_body_mismatch.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_cross_patient_portal_routes.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_google_calendar_disconnect_api.py:_arming_here_stays_here",
+      "backend/tests_integration/api/test_patient_booking_routes.py:_arming_here_stays_here"
+    ],
+    "9aa621463b568ff6": [
+      "backend/tests_integration/api/test_dashboard_summary_audit_e2e.py:engine",
+      "backend/tests_integration/api/test_self_audit_log_paging_e2e.py:engine",
+      "backend/tests_integration/api/test_sessions_audit_e2e.py:engine"
+    ],
+    "9aec4ae2d7ad1a59": [
+      "backend/tests/test_cloud_tasks_service.py:_reset_contextvars",
+      "backend/tests/test_outbound_trace_propagation.py:_reset_contextvars"
+    ],
+    "9b0a5e7b620846dc": [
+      "backend/tests_integration/database/test_appointment_no_overlap_db.py:_make_appointment",
+      "backend/tests_integration/database/test_appointment_unique_slot_db.py:_make_appointment"
+    ],
+    "9b684d472a39da30": [
+      "backend/tests_integration/database/test_answered_titles_migration.py:_columns",
+      "backend/tests_integration/database/test_practice_owned_answers_db.py:_columns"
+    ],
+    "9c2ab9048a3462ca": [
+      "backend/tests/test_scheduling_routes.py:_create_payload",
+      "backend/tests/test_telehealth_on_the_write_path.py:_create_payload"
+    ],
+    "9c9694b07214cdc6": [
+      "backend/tests_integration/api/test_dashboard_summary_audit_e2e.py:_audit_service",
+      "backend/tests_integration/api/test_self_audit_log_paging_e2e.py:_audit_service",
+      "backend/tests_integration/api/test_sessions_audit_e2e.py:_audit_service"
+    ],
+    "9d0fd9870c6fa3d6": [
+      "backend/tests/test_practice_owned_answers.py:_calendar_key",
+      "backend/tests_integration/database/test_practice_owned_answers_db.py:_calendar_key"
+    ],
+    "9f7a9771b70ec045": [
+      "backend/tests/test_note_redraft.py:registry",
+      "backend/tests/test_session_dictations.py:registry"
+    ],
+    "a209cd569c169e4c": [
+      "backend/tests/test_chart_fields.py:_definition",
+      "backend/tests/test_hpi_section_call.py:_definition",
+      "backend/tests/test_psychotherapy_section_call.py:_definition",
+      "backend/tests/test_risk_section_call.py:_definition"
+    ],
+    "a2c705033d7b2af8": [
+      "backend/tests_integration/database/test_audit_review_novelty_db.py:_rows_for",
+      "backend/tests_integration/database/test_audit_review_payload_db.py:_rows_for"
+    ],
+    "a2e3e69ad5103faa": [
+      "backend/tests_integration/database/test_claim_pipeline_db.py:patient_id",
+      "backend/tests_integration/database/test_claims_rls.py:patient_id",
+      "backend/tests_integration/database/test_patient_coverage_rls.py:patient_id"
+    ],
+    "a3ea5e421c400e35": [
+      "backend/tests_integration/database/test_inbox_db.py:_patient",
+      "backend/tests_integration/database/test_patient_message_inbox_db.py:_patient"
+    ],
+    "a5a5c273dfd55ca0": [
+      "backend/tests_integration/database/test_appointment_no_overlap_db.py:_arm",
+      "backend/tests_integration/database/test_appointment_overlap_db.py:_arm",
+      "backend/tests_integration/database/test_appointment_unique_slot_db.py:_arm",
+      "backend/tests_integration/database/test_dashboard_repo_queries_integration.py:_arm",
+      "backend/tests_integration/database/test_supervision_repository_integration.py:_arm"
+    ],
+    "a7fe9d805ba06471": [
+      "backend/tests/test_route_mfa_guardrails.py:_has_dependency",
+      "backend/tests/test_subscription_access_guardrails.py:_has_dependency",
+      "backend/tests/test_token_lifecycle.py:_has_dependency"
+    ],
+    "a8ef13060da31243": [
+      "backend/tests/test_calendar_event_titling.py:audit_spy",
+      "backend/tests/test_calendar_practice_import.py:audit_spy"
+    ],
+    "abd077a59718da87": [
+      "backend/tests/test_billing_period_export.py:_user",
+      "backend/tests/test_claims_export_routes.py:_user",
+      "backend/tests/test_superbills_routes.py:_user"
+    ],
+    "ad8665a39a632889": [
+      "backend/tests_integration/database/test_imported_sessions_migration.py:test_parent_revision_is_still_the_one_this_fixture_assumes",
+      "backend/tests_integration/database/test_patient_charge_method_backfill_rls.py:test_parent_revision_is_still_the_one_this_fixture_assumes",
+      "backend/tests_integration/database/test_patient_message_thread_reads_migration.py:test_parent_revision_is_still_the_one_this_fixture_assumes",
+      "backend/tests_integration/database/test_patient_source_mappings_migration.py:test_parent_revision_is_still_the_one_this_fixture_assumes"
+    ],
+    "aed3fd0a130190f9": [
+      "backend/tests_integration/database/test_homework_db.py:_as_patient",
+      "backend/tests_integration/database/test_notes_restricted_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_chat_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_documents_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_intake_routes_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_messages_rls.py:_as_patient",
+      "backend/tests_integration/database/test_patient_principal_rls.py:_as_patient",
+      "backend/tests_integration/database/test_refill_requests_rls.py:_as_patient",
+      "backend/tests_integration/database/test_rls_reconcile_on_migrate.py:_as_patient"
+    ],
+    "aed849722bebeb7b": [
+      "backend/tests/test_routes_compliance.py:__init__",
+      "backend/tests/test_routes_compliance_documents.py:__init__"
+    ],
+    "aedafb45e7efca98": [
+      "backend/tests_integration/database/test_note_signing_db.py:_session",
+      "backend/tests_integration/database/test_session_dictations_db.py:_session"
+    ],
+    "af2b25c72bc77540": [
+      "backend/tests/test_claims_pipeline_ledger.py:__init__",
+      "backend/tests/test_claims_remittance.py:__init__",
+      "backend/tests/test_hold_receiver.py:__init__",
+      "backend/tests/test_remittance_hold_settle.py:__init__",
+      "backend/tests/test_remittance_holds.py:__init__"
+    ],
+    "b09436f7e7442774": [
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_encryption_key",
+      "backend/tests_integration/database/test_patient_export_real_rows.py:_encryption_key"
+    ],
+    "b11785e45436625c": [
+      "backend/tests/test_routes_compliance.py:get",
+      "backend/tests/test_routes_compliance_documents.py:get"
+    ],
+    "b4b903a3929bca75": [
+      "backend/tests/test_patient_intake_review_api.py:_patient",
+      "backend/tests/test_refill_requests_api.py:_chart"
+    ],
+    "b67a10e78ae1c691": [
+      "backend/tests/test_patient_documents_patient_api.py:generate_signed_url",
+      "backend/tests/test_routes_patient_documents.py:generate_signed_url"
+    ],
+    "b86ac4976037e305": [
+      "backend/tests/test_chart_proposals.py:__init__",
+      "backend/tests/test_import_seeds_the_chart.py:__init__"
+    ],
+    "b92c4f5e3809d805": [
+      "backend/tests_integration/database/test_patient_export_real_rows.py:_storage_root",
+      "backend/tests_integration/database/test_practice_export_real_rows.py:_storage_root"
+    ],
+    "b95ca8e092b6551f": [
+      "backend/tests_integration/database/test_audit_empty_principal_bucket.py:_clean_principal_contextvars",
+      "backend/tests_integration/database/test_patient_guc_integration.py:_clean_principal_contextvars"
+    ],
+    "ba4e584e60c05d36": [
+      "backend/tests/test_portal_module_gate.py:_boom",
+      "backend/tests/test_portal_resolver.py:_boom"
+    ],
+    "bad2534091615ecb": [
+      "backend/tests/test_hpi_section_call.py:_quote",
+      "backend/tests/test_psychotherapy_section_call.py:_quote"
+    ],
+    "bb9a47ca4670b1eb": [
+      "backend/tests_integration/database/test_notes_restricted_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_documents_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_intake_routes_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_patient_messages_rls.py:_as_clinician",
+      "backend/tests_integration/database/test_refill_requests_rls.py:_as_clinician"
+    ],
+    "bcbfe3a344600bd7": [
+      "backend/tests/test_client_sender.py:resolve",
+      "backend/tests/test_portal_auth_routes.py:resolve"
+    ],
+    "bd803fda01c61b5c": [
+      "backend/tests/test_chat_context_bundler.py:notes_repo",
+      "backend/tests/test_chat_context_bundler_patient_documents.py:notes_repo",
+      "backend/tests/test_note_service.py:notes_repo",
+      "backend/tests/test_scheduling_service.py:notes_repo",
+      "backend/tests/test_session_service.py:notes_repo",
+      "backend/tests/test_start_session_from_appointment.py:notes_repo"
+    ],
+    "bda57b663599666a": [
+      "backend/tests_integration/database/test_audit_writes.py:engine",
+      "backend/tests_integration/database/test_platform_audit_writes.py:engine"
+    ],
+    "bdfe8c495be7ea9e": [
+      "backend/tests_integration/database/test_patient_chart_history_db.py:_new_patient",
+      "backend/tests_integration/database/test_patient_medications_db.py:_new_patient"
+    ],
+    "be6ad5363cd57206": [
+      "backend/tests_integration/database/test_patient_documents_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_intake_review_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_intake_routes_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_intake_submissions_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:two_patients",
+      "backend/tests_integration/database/test_patient_messages_rls.py:two_patients"
+    ],
+    "be9f9d5830372f50": [
+      "backend/tests/test_routes_compliance.py:update",
+      "backend/tests/test_routes_compliance_documents.py:update"
+    ],
+    "beb95942c3643d59": [
+      "backend/tests/test_billing_report_route.py:_user",
+      "backend/tests/test_patient_statement_route.py:_user"
+    ],
+    "c185a6001304f97e": [
+      "backend/tests/test_chart_proposals_api.py:complete",
+      "backend/tests/test_intake_chart_proposals.py:complete"
+    ],
+    "c27ddfffab33dd54": [
+      "backend/tests_integration/database/test_ask_clients_about_ai_notes_migration.py:_insert_practice",
+      "backend/tests_integration/database/test_send_clients_video_link_migration.py:_insert_practice"
+    ],
+    "c319eb109c6c6380": [
+      "backend/tests/test_intake_packets_api.py:_not_a_clinician_identity",
+      "backend/tests/test_patient_intake_clinician_read.py:_not_a_clinician_identity"
+    ],
+    "c35561fc5e2ef3c2": [
+      "backend/tests/test_patient_intake_assignment_service.py:measure_repo",
+      "backend/tests/test_patient_intake_assignments_api.py:measure_repo"
+    ],
+    "c77dc42a8619495a": [
+      "backend/tests_integration/database/test_prescribing_attestation_rls.py:_load",
+      "backend/tests_integration/database/test_prescribing_finalization_db.py:_load"
+    ],
+    "c91e6115360c32d6": [
+      "backend/tests/test_patient_intake_api.py:_stash_clinician_identity",
+      "backend/tests/test_patient_intake_assignments_api.py:_stash_clinician_identity"
+    ],
+    "c92f256161c1f99c": [
+      "backend/tests/test_patient_message_attachments_api.py:resolve",
+      "backend/tests/test_patient_messages_api.py:resolve"
+    ],
+    "c93b3be6529a5ea6": [
+      "backend/tests/test_patient_documents_service.py:mock_enqueue",
+      "backend/tests/test_routes_patient_documents.py:mock_enqueue"
+    ],
+    "ca6bfe8d0b5bed71": [
+      "backend/tests/test_bedrock_structured_llm_gateway.py:span_exporter",
+      "backend/tests/test_chat_turn_service.py:span_exporter",
+      "backend/tests/test_llm_telemetry.py:span_exporter"
+    ],
+    "cbb9cb42e57b3434": [
+      "backend/tests/test_file_storage.py:reload",
+      "backend/tests/test_patient_documents_patient_api.py:reload",
+      "backend/tests/test_patient_documents_service.py:reload",
+      "backend/tests/test_routes_patient_documents.py:reload"
+    ],
+    "ccece2a6fd951b9e": [
+      "backend/tests/test_practice_billing_profile.py:_empty_session",
+      "backend/tests/test_scheduling_policy.py:_empty_session"
+    ],
+    "ce6b512ace1bbf57": [
+      "backend/tests_integration/api/test_dashboard_summary_audit_e2e.py:pg_session",
+      "backend/tests_integration/api/test_sessions_audit_e2e.py:pg_session"
+    ],
+    "d04a8e3d452784ea": [
+      "backend/tests_integration/api/test_away_acknowledgment.py:_armed_user",
+      "backend/tests_integration/api/test_homework_routes.py:_armed_user",
+      "backend/tests_integration/api/test_restricted_note_companion_routes.py:_armed_user",
+      "backend/tests_integration/api/test_waitlist_routes.py:_armed_user"
+    ],
+    "d06458672b5ed4de": [
+      "backend/tests_integration/api/test_chat_real_db.py:_stash_identity",
+      "backend/tests_integration/api/test_google_calendar_disconnect_api.py:_stash_identity",
+      "backend/tests_integration/api/test_homework_routes.py:_stash_identity",
+      "backend/tests_integration/api/test_patients_api_e2e.py:_stash_identity",
+      "backend/tests_integration/api/test_restricted_note_companion_routes.py:_stash_identity",
+      "backend/tests_integration/api/test_waitlist_routes.py:_stash_identity",
+      "backend/tests_integration/database/test_patient_charges_db.py:_stash_identity"
+    ],
+    "d09fe7c1e78abdb6": [
+      "backend/tests/test_ai_efforts.py:__init__",
+      "backend/tests/test_eval_anthropic_api.py:__init__"
+    ],
+    "d294ad97c0b7a6cb": [
+      "backend/tests/test_note_generation_stand_in.py:stand_in",
+      "backend/tests/test_note_type_derive_stand_in.py:stand_in"
+    ],
+    "d3e6bdccebfba115": [
+      "backend/tests/test_practice_admin_routes.py:_user",
+      "backend/tests/test_practice_invite_routes.py:_user"
+    ],
+    "d409a0835edb3a79": [
+      "backend/tests_integration/database/test_contracted_rates_db.py:_audit_for",
+      "backend/tests_integration/database/test_credential_record_db.py:_audit_for",
+      "backend/tests_integration/database/test_credentialing_checklist_db.py:_audit_for"
+    ],
+    "d60c79efc5ff3754": [
+      "backend/tests/test_portal_auth_routes.py:_clean_rate_limits",
+      "backend/tests/test_portal_practice_routes.py:_clean_rate_limits",
+      "backend/tests/test_portal_recovery_routes.py:_clean_rate_limits"
+    ],
+    "d6b529cea6e3fdfb": [
+      "backend/tests/test_ehr_routes_api.py:raise_429",
+      "backend/tests/test_patient_messages_api.py:raise_429",
+      "backend/tests/test_routes_chat_streaming.py:raise_429",
+      "backend/tests/test_routes_sessions.py:raise_429"
+    ],
+    "d7340f51b765f261": [
+      "backend/tests/test_client_booking_gets_a_room.py:no_wait",
+      "backend/tests/test_telehealth_on_the_write_path.py:no_wait"
+    ],
+    "d7b9e4c4f86c2a74": [
+      "backend/tests/test_file_storage.py:bucket",
+      "backend/tests/test_patient_documents_patient_api.py:bucket",
+      "backend/tests/test_patient_documents_service.py:bucket",
+      "backend/tests/test_routes_patient_documents.py:bucket"
+    ],
+    "da077c58b20111dc": [
+      "backend/tests/test_cloud_logging_fields.py:_records",
+      "backend/tests/test_log_request_identity.py:_records"
+    ],
+    "db0303b99915985c": [
+      "backend/tests/test_intake_blank_forms_api.py:blank_form_settings",
+      "backend/tests/test_patient_documents_patient_api.py:documents_settings"
+    ],
+    "db115575a8bc29de": [
+      "backend/tests/test_scheduling_service.py:mock_note_service",
+      "backend/tests/test_session_service.py:mock_note_generation_service"
+    ],
+    "dbb2a4ff1d76b636": [
+      "backend/tests/test_note_generation_stand_in.py:post",
+      "backend/tests/test_note_type_derive_stand_in.py:post"
+    ],
+    "dbf47c450cac90c6": [
+      "backend/tests/test_billing_period_export.py:_audit_rows",
+      "backend/tests/test_claims_export_routes.py:_audit_rows",
+      "backend/tests/test_patient_statement_route.py:_audit_rows",
+      "backend/tests/test_superbills_routes.py:_audit_rows"
+    ],
+    "dc4937b7f4fef8af": [
+      "backend/tests/test_practice_domain_stuck.py:zone",
+      "backend/tests/test_practice_domains_routes.py:zone"
+    ],
+    "e1928489a87b8664": [
+      "backend/tests/test_patient_payments.py:get_active",
+      "backend/tests/test_patient_write_offs.py:get_active"
+    ],
+    "e473e04301ab0540": [
+      "backend/tests/test_chart_proposals.py:fails",
+      "backend/tests/test_import_seeds_the_chart.py:fails"
+    ],
+    "e505c755eabf7070": [
+      "backend/tests/test_client_ai_consent.py:_user",
+      "backend/tests/test_coverage_routes.py:_user",
+      "backend/tests/test_patient_payments.py:_user",
+      "backend/tests/test_patient_write_offs.py:_user",
+      "backend/tests_integration/api/test_credentialing_checklist_routes.py:_user",
+      "backend/tests_integration/api/test_enrollment_task_routes.py:_user",
+      "backend/tests_integration/api/test_payer_enrollment_routes.py:_user",
+      "backend/tests_integration/api/test_practice_billing_routes.py:_user"
+    ],
+    "e540202385095dbb": [
+      "backend/tests/test_practice_admin_routes.py:_code",
+      "backend/tests/test_practice_invite_routes.py:_code",
+      "backend/tests/test_software_update_routes.py:_code",
+      "backend/tests_integration/api/test_practice_invites.py:_code"
+    ],
+    "e816d6250b4f643a": [
+      "backend/tests/test_patient_intake_artifacts_api.py:_item",
+      "backend/tests/test_patient_intake_coverage_api.py:_item"
+    ],
+    "ea2231274e8692b4": [
+      "backend/tests/test_pentest_collectors_http.py:_fake_urlopen",
+      "backend/tests/test_pentest_identity.py:_fake_urlopen",
+      "backend/tests/test_pentest_identity.py:_fake_urlopen",
+      "backend/tests/test_pentest_identity.py:_fake_urlopen",
+      "backend/tests/test_pentest_identity.py:_fake_urlopen"
+    ],
+    "ea2807f67883abde": [
+      "backend/tests/test_patient_payments.py:__init__",
+      "backend/tests/test_patient_write_offs.py:__init__"
+    ],
+    "ecf8802e5297cd0d": [
+      "backend/tests/test_claims_pipeline_ledger.py:add_ledger_row",
+      "backend/tests/test_claims_remittance.py:add_ledger_row",
+      "backend/tests/test_hold_receiver.py:add_ledger_row",
+      "backend/tests/test_remittance_hold_settle.py:add_ledger_row",
+      "backend/tests/test_remittance_holds.py:add_ledger_row"
+    ],
+    "ee3f69756281332d": [
+      "backend/tests_integration/database/test_alembic_idempotency.py:_alembic",
+      "backend/tests_integration/database/test_platform_chain.py:_alembic"
+    ],
+    "eebb4f40e7c0cf51": [
+      "backend/tests/test_portal_auth_routes.py:_portal_settings",
+      "backend/tests/test_portal_recovery_routes.py:_portal_settings"
+    ],
+    "eedc3441f0ca9640": [
+      "backend/tests/test_audit_batched.py:set",
+      "backend/tests/test_audit_registered_coalescing.py:set"
+    ],
+    "efb3cedb4fca59c8": [
+      "backend/tests_integration/database/test_practice_domain_apexes_db.py:session",
+      "backend/tests_integration/database/test_practice_domains_db.py:session"
+    ],
+    "efc9cc1e47ba01a5": [
+      "backend/tests/test_routes_compliance.py:delete",
+      "backend/tests/test_routes_compliance_documents.py:delete"
+    ],
+    "f0287297edac8952": [
+      "backend/tests/test_calendar_event_titling.py:_set_encryption_key",
+      "backend/tests/test_calendar_practice_import.py:_set_encryption_key",
+      "backend/tests/test_calendar_provider_seam.py:_set_encryption_key"
+    ],
+    "f10f83622cc8acea": [
+      "backend/tests_integration/database/test_chat_context_bundler_scoping.py:_cleanup_tokens",
+      "backend/tests_integration/database/test_diagnostic_assessments_rls.py:_cleanup_tokens",
+      "backend/tests_integration/database/test_outcome_measures_rls.py:_cleanup_tokens"
+    ],
+    "f2091d9c8db22bc3": [
+      "backend/tests/test_patient_intake_assignments_api.py:_item_id",
+      "backend/tests/test_patient_intake_export_api.py:_item_id",
+      "backend/tests/test_patient_intake_review_api.py:_item_id"
+    ],
+    "f3b0deae1ddd31d6": [
+      "backend/tests/test_busy_time.py:__init__",
+      "backend/tests/test_calendar_practice_import.py:__init__"
+    ],
+    "f4e51883f6018b1a": [
+      "backend/tests/test_google_calendar_follow.py:_in",
+      "backend/tests/test_outside_sessions.py:_in",
+      "backend/tests/test_outside_sessions_google.py:_in"
+    ],
+    "f75a43e2e7bb2e6f": [
+      "backend/tests_integration/database/test_booking_hosts_db.py:engine",
+      "backend/tests_integration/database/test_client_sender_db.py:engine",
+      "backend/tests_integration/database/test_hosted_addresses_db.py:engine",
+      "backend/tests_integration/database/test_portal_hosts_db.py:engine",
+      "backend/tests_integration/database/test_practice_sites_db.py:engine"
+    ],
+    "fcc58cb2506035d3": [
+      "backend/tests_integration/database/test_patient_intake_artifacts_rls.py:_shape",
+      "backend/tests_integration/database/test_patient_intake_assignments_rls.py:_shape",
+      "backend/tests_integration/database/test_patient_intake_review_rls.py:_shape",
+      "backend/tests_integration/database/test_patient_intake_signatures_rls.py:_shape",
+      "backend/tests_integration/database/test_patient_message_attachments_rls.py:_shape",
+      "backend/tests_integration/database/test_patient_messages_rls.py:_shape",
+      "backend/tests_integration/database/test_portal_auth_store.py:_shape"
+    ],
+    "fda96185786214fb": [
+      "backend/tests_integration/api/test_cross_clinician_documents_routes.py:_truncate_audit",
+      "backend/tests_integration/api/test_cross_clinician_export_routes.py:_truncate_audit",
+      "backend/tests_integration/api/test_cross_clinician_message_thread_routes.py:_truncate_audit",
+      "backend/tests_integration/api/test_cross_clinician_notes_routes.py:_truncate_audit",
+      "backend/tests_integration/api/test_cross_clinician_sessions_routes.py:_truncate_audit"
+    ],
+    "fdf5a4534fbaf3e6": [
+      "backend/tests_integration/database/test_answered_titles_migration.py:_rows",
+      "backend/tests_integration/database/test_patient_source_mappings_migration.py:_read"
+    ],
+    "fefbd49d1f9fa93b": [
+      "backend/tests/test_portal_practice_routes.py:__init__",
+      "backend/tests/test_rate_limit.py:__init__"
+    ]
+  }
+}

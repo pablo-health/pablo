@@ -148,6 +148,26 @@ jobs:
         if: steps.classify.outputs.substantive != 'false'
         run: make lint
 
+      - name: Code ratchet (file size, copied functions)
+        if: steps.classify.outputs.substantive != 'false'
+        # Fails on a source file crossing 800 lines, a recorded one growing, or
+        # a function copied into another file (test files counted apart). The
+        # diff numbers are notices. Runs on the project's Python: an older
+        # parser cannot read the code.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          # On a PR, diff from the merge commit's first parent: the main this
+          # checkout was merged into. pull_request.base.sha can trail it, and
+          # then other PRs' lines count as this one's.
+          base="$BASE_SHA"
+          if [[ "$EVENT" == pull_request ]] && git rev-parse -q --verify HEAD^2 >/dev/null; then
+            base="$(git rev-parse HEAD^1)"
+          fi
+          poetry run python scripts/check_code_ratchet_selftest.py
+          poetry run python scripts/check_code_ratchet.py ${base:+--base "$base"}
+
       - name: Alembic single-head check
         if: steps.classify.outputs.substantive != 'false'
         # Two PRs that each add a migration off the same parent will

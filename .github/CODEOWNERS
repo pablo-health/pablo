@@ -35,6 +35,10 @@ AGENTS.md                                   @kurtn-pablo
 # a change to what every later run is allowed to do.
 /.pre-commit-config.yaml                    @kurtn-pablo
 /scripts/check_audit_params.py              @kurtn-pablo
+# The recorded sizes and duplicate groups only shrink; raising one is a review.
+/scripts/code_ratchet_baseline.json         @kurtn-pablo
+/scripts/check_code_ratchet.py              @kurtn-pablo
+/scripts/check_code_ratchet_selftest.py     @kurtn-pablo
 /.github/                                   @kurtn-pablo
 /.github/workflows/                         @kurtn-pablo
 /.github/CODEOWNERS                         @kurtn-pablo
