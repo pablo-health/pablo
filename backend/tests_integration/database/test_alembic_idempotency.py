@@ -174,24 +174,58 @@ def _meets_criteria_is_nullable(database_url: str) -> bool:
     return row[0] == "YES"
 
 
-_PLATFORM_PAYER_TABLES = (
+# Tables that moved from the practice schemas to ``platform``.
+_PLATFORM_TABLES = (
     "payer_participations",
     "payer_participation_events",
     "contracted_rates",
     "payer_authorizations",
+    "credential_bank_accounts",
+    "credential_confirmations",
+    "credential_disclosures",
+    "credential_education",
+    "credential_employment",
+    "credential_government_ids",
+    "credential_liability_policies",
+    "credential_licenses",
+    "credential_references",
+    "credential_service_locations",
+    "credential_training",
 )
+_GOVERNMENT_ID_COLUMNS = ("caqh_id", "medicaid_intent", "medicare_intent", "supervision_status")
 
 
-def _missing_platform_payer_tables(database_url: str) -> list[str]:
+def _missing_platform_objects(database_url: str) -> list[str]:
     eng = create_engine(database_url)
     try:
         with eng.connect() as conn:
-            return [
+            missing = [
                 t
-                for t in _PLATFORM_PAYER_TABLES
+                for t in _PLATFORM_TABLES
                 if conn.execute(text("SELECT to_regclass(:n)"), {"n": f"platform.{t}"}).scalar()
                 is None
             ]
+            columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns"
+                        " WHERE table_schema = 'platform'"
+                        " AND table_name = 'credential_government_ids'"
+                    )
+                ).scalars()
+            )
+            missing += [
+                f"credential_government_ids.{c}" for c in _GOVERNMENT_ID_COLUMNS if c not in columns
+            ]
+            if not conn.execute(
+                text(
+                    "SELECT 1 FROM pg_constraint"
+                    " WHERE conname = 'ck_credential_government_ids_supervision_status'"
+                    " AND conrelid = to_regclass('platform.credential_government_ids')"
+                )
+            ).scalar():
+                missing.append("ck_credential_government_ids_supervision_status")
+            return missing
     finally:
         eng.dispose()
 
@@ -209,8 +243,8 @@ def test_meets_criteria_nullable_round_trip(fresh_db: str) -> None:
 
     _alembic(fresh_db, "downgrade", "b7e2f4a1c9d3")
     assert _meets_criteria_is_nullable(fresh_db) is False
-    # The tenant chain's old payer-table drops must not reach the platform copies.
-    assert _missing_platform_payer_tables(fresh_db) == []
+    # The tenant chain's old drops and alters must not reach the platform copies.
+    assert _missing_platform_objects(fresh_db) == []
 
     _alembic(fresh_db, "upgrade", "head")
     assert _meets_criteria_is_nullable(fresh_db) is True
