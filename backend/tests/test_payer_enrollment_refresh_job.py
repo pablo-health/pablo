@@ -144,14 +144,14 @@ class TestTheListingStopsOnAnEmptyPage:
             self.pages_read = 0
 
         def list_enrollments(self, _filters: Any) -> Any:
-            from app.models.claims_transport import EnrollmentPage  # noqa: PLC0415
+            from app.models.claims_transport import EnrollmentPage
 
             self.pages_read += 1
             return EnrollmentPage(items=[], nextPageToken="always")
 
     def test_an_empty_page_ends_the_listing_in_one_read(self) -> None:
-        from app.claims.enrollment import MAX_LIST_PAGES, _list_all  # noqa: PLC0415
-        from app.models.claims_transport import EnrollmentFilters  # noqa: PLC0415
+        from app.claims.enrollment import MAX_LIST_PAGES, _list_all
+        from app.models.claims_transport import EnrollmentFilters
 
         client = self._EndlessCursorClient()
 

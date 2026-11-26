@@ -36,7 +36,7 @@ def _count(engine: Engine, schema: str, table: str) -> int:
     Pass the superuser engine when the question is "is the row there", and the
     ordinary one when it is "can this principal see it".
     """
-    from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+    from app.db import PLATFORM_SCHEMA
 
     with engine.connect() as conn:
         conn.execute(text(f'SET search_path = "{schema}", {PLATFORM_SCHEMA}, public'))
@@ -81,10 +81,10 @@ def _seed_identity(conn: Connection, *, email: str, as_user: bool, with_mapping:
     ``chat_quality_review_opt_in``, …), so a hand-written INSERT has to be
     updated every time one lands. The ORM already knows them.
     """
-    from app.db import DEFAULT_PRACTICE_ID, PLATFORM_SCHEMA  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_ID, PLATFORM_SCHEMA
 
     if as_user:
-        from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
+        from app.db.platform_models import PlatformUserRow
 
         with Session(bind=conn) as session:
             session.add(
@@ -117,7 +117,7 @@ def _seed_identity(conn: Connection, *, email: str, as_user: bool, with_mapping:
 
 
 def _clear_identities(conn: Connection, emails: list[str]) -> None:
-    from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+    from app.db import PLATFORM_SCHEMA
 
     for table in ("email_tenant_mappings", "allowed_emails", "users"):
         conn.execute(

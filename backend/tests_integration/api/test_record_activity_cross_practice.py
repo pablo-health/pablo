@@ -63,15 +63,15 @@ def _practice_with_owner(engine: Engine, label: str) -> Iterator[SimpleNamespace
     The client has a few audit rows written by the owner, so there is
     activity to find — or, from the other practice, to fail to find.
     """
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
         UserIdentityRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -196,8 +196,8 @@ def _get_as(app: FastAPI, owner: SimpleNamespace, path: str) -> tuple[int, Any]:
     accepted as *owner*'s, with a second factor, and everything after that —
     identity mapping, practice resolution, search_path, RLS — is the app's.
     """
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from fastapi.testclient import TestClient
 
     now = int(datetime.now(UTC).timestamp())
     identity = VerifiedIdentity(
@@ -258,7 +258,7 @@ class TestAnotherPracticesClientIsNotThere:
         practice_b: SimpleNamespace,
         with_cursor: bool,
     ) -> None:
-        from app.models.audit import AuditCursor  # noqa: PLC0415
+        from app.models.audit import AuditCursor
 
         nowhere = str(uuid.uuid4())
         query = ""

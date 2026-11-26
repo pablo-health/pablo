@@ -86,10 +86,10 @@ def practice(setup_engine: Engine) -> Iterator[str]:
     The clinician owns the practice in the platform schema, which is how the
     recovery lookup finds whom to read as.
     """
-    from datetime import UTC, datetime  # noqa: PLC0415
+    from datetime import UTC, datetime
 
-    from app.db.platform_models import PlatformUserRow, PracticeRow  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.platform_models import PlatformUserRow, PracticeRow
+    from app.db.provisioning import create_practice_schema
 
     with setup_engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -152,7 +152,7 @@ def pooled() -> Iterator[Engine]:
 
 
 def _patient_a_phone() -> Any:
-    from app.db.models import PatientRow  # noqa: PLC0415
+    from app.db.models import PatientRow
 
     return select(PatientRow.phone).where(PatientRow.id == _PATIENT_A)
 
@@ -205,7 +205,7 @@ def _assert_clean(seen: dict[str, Any], first_pid: int) -> None:
 def test_a_scoped_read_leaves_nothing_on_the_pooled_connection(
     practice: str, pooled: Engine
 ) -> None:
-    from app.db import read_once_as, set_tenant_schema  # noqa: PLC0415
+    from app.db import read_once_as, set_tenant_schema
 
     def request() -> int:
         with Session(bind=pooled) as session:
@@ -230,8 +230,8 @@ def test_the_recovery_lookup_leaves_nothing_on_the_pooled_connection(
 ) -> None:
     """The real ``find_patient``, reading as each clinician of the practice
     in turn, on the one pooled connection."""
-    from app.db import set_tenant_schema  # noqa: PLC0415
-    from app.portal import recovery_gateway  # noqa: PLC0415
+    from app.db import set_tenant_schema
+    from app.portal import recovery_gateway
 
     def pooled_session(schema: str | None = None) -> Session:
         session = Session(bind=pooled)
@@ -248,7 +248,7 @@ def test_the_recovery_lookup_leaves_nothing_on_the_pooled_connection(
             target = work.find_patient("a@example.test")
             assert target is not None, "the lookup found nothing to prove a leak against"
             assert target.patient_id == _PATIENT_A
-            from app.portal.db_store import DbPortalAuthStore  # noqa: PLC0415
+            from app.portal.db_store import DbPortalAuthStore
 
             assert isinstance(work.challenges, DbPortalAuthStore)
             session = work.challenges._session
@@ -261,7 +261,7 @@ def test_the_recovery_lookup_leaves_nothing_on_the_pooled_connection(
 def test_a_clinician_armed_transaction_leaves_nothing_on_the_pooled_connection(
     practice: str, pooled: Engine
 ) -> None:
-    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
+    from app.db import arm_current_user_id, set_tenant_schema
 
     def request() -> int:
         with Session(bind=pooled) as session:
@@ -280,7 +280,7 @@ def test_the_statement_after_a_scoped_read_cannot_read_the_row(
     practice: str, pooled: Engine
 ) -> None:
     """The savepoint rollback itself: same session, same transaction."""
-    from app.db import read_once_as, set_tenant_schema  # noqa: PLC0415
+    from app.db import read_once_as, set_tenant_schema
 
     def request() -> None:
         with Session(bind=pooled) as session:

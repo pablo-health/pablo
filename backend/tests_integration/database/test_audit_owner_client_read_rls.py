@@ -120,7 +120,7 @@ def _write_row(
 
 @pytest.fixture(scope="module")
 def cast(engine: Engine) -> Iterator[_Cast]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -230,8 +230,8 @@ class TestWhatTheOwnerReads:
     ) -> None:
         """The route reads through ``list_for_patient``, which has no actor
         filter of its own — so this is the policy deciding, end to end."""
-        from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
-        from sqlalchemy.orm import Session  # noqa: PLC0415
+        from app.repositories.postgres.audit import PostgresAuditRepository
+        from sqlalchemy.orm import Session
 
         with Session(bind=engine) as session:
             _arm(session.connection(), cast.schema, user_id=_OWNER)

@@ -48,8 +48,8 @@ NESTED_TIMEOUT_S = 5.0
 
 
 def _clear_engine_caches() -> None:
-    from app import db  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
+    from app import db
+    from app.settings import get_settings
 
     for cached in (db.get_nested_session_factory, db.get_session_factory):
         cached.cache_clear()
@@ -100,7 +100,7 @@ def practice_id() -> Iterator[str]:
 @contextmanager
 def _request_holding_a_connection() -> Iterator[Session]:
     """Bind a main-pool session that holds a connection, as a request past its first query."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         get_session_factory,
         publish_request_session,
         restore_request_session,
@@ -118,7 +118,7 @@ def _request_holding_a_connection() -> Iterator[Session]:
 
 
 def _nested_checked_out() -> int:
-    from app.db import get_nested_engine  # noqa: PLC0415
+    from app.db import get_nested_engine
 
     return get_nested_engine().pool.checkedout()  # type: ignore[attr-defined]
 
@@ -134,9 +134,9 @@ def test_the_real_practice_facts_and_sender_lookups_pass_the_guard(
     opened and closed in turn, so the guard stays quiet. The practice sends the
     link, so the facts lookup reaches the sender lookup too.
     """
-    from app.db import create_standalone_session  # noqa: PLC0415
-    from app.portal.client_sender import resolve_client_sender  # noqa: PLC0415
-    from app.services.client_video_link_notice import read_practice_facts  # noqa: PLC0415
+    from app.db import create_standalone_session
+    from app.portal.client_sender import resolve_client_sender
+    from app.services.client_video_link_notice import read_practice_facts
 
     with _request_holding_a_connection():
         facts = read_practice_facts(practice_id)
@@ -154,7 +154,7 @@ def test_the_real_practice_facts_and_sender_lookups_pass_the_guard(
 
 def test_a_standalone_open_beside_a_held_nested_session_raises(default_engines: None) -> None:
     """The guard on real sessions: hold a nested one, open another, refused before checkout."""
-    from app.db import NestedPoolContractError, create_standalone_session  # noqa: PLC0415
+    from app.db import NestedPoolContractError, create_standalone_session
 
     with _request_holding_a_connection(), create_standalone_session() as lookup:
         lookup.execute(text("SELECT 1"))
@@ -171,11 +171,11 @@ def test_a_hit_through_tenant_db_session_names_the_caller_once_per_site(
     Raising, the message names this test. In a server, two different callers
     each get their own ``nested_pool_contract`` line.
     """
-    from unittest.mock import patch  # noqa: PLC0415
+    from unittest.mock import patch
 
-    from app import db  # noqa: PLC0415
-    from app.db import NestedPoolContractError, create_standalone_session  # noqa: PLC0415
-    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
+    from app import db
+    from app.db import NestedPoolContractError, create_standalone_session
+    from app.db.tenant_session import tenant_db_session
 
     def first_caller() -> None:
         with tenant_db_session("public", "user-1"):
@@ -211,7 +211,7 @@ def test_a_hit_through_tenant_db_session_names_the_caller_once_per_site(
 
 def test_a_closed_nested_session_frees_the_next_open(default_engines: None) -> None:
     """Close the leaf and the next lookup is fine: the guard tracks holding, not history."""
-    from app.db import create_standalone_session  # noqa: PLC0415
+    from app.db import create_standalone_session
 
     with _request_holding_a_connection():
         with create_standalone_session() as first:
@@ -231,8 +231,8 @@ def test_an_exhausted_nested_pool_fails_in_its_own_timeout(
     with a pool timeout inside the nested pool's own timeout, and the stats
     line counts the timeouts on the ``nested`` pool and names the ``main`` one.
     """
-    from app.db import MAIN_POOL, NESTED_POOL, create_standalone_session  # noqa: PLC0415
-    from app.db.pool_stats import POOL_STATS_EVENT, log_pool_stats  # noqa: PLC0415
+    from app.db import MAIN_POOL, NESTED_POOL, create_standalone_session
+    from app.db.pool_stats import POOL_STATS_EVENT, log_pool_stats
 
     log_pool_stats()  # start the counters from zero
     holders_in = threading.Barrier(3, timeout=20)

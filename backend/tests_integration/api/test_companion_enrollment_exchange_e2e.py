@@ -42,7 +42,7 @@ _ISSUED_REFRESH = "ref_tok"
 
 
 def _public_jwk() -> dict[str, str]:
-    from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec
 
     key = ec.generate_private_key(ec.SECP256R1())
     jwk: dict[str, str] = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(key.public_key()))
@@ -63,9 +63,9 @@ def _enrollment(install_id: str) -> dict[str, Any]:
 @pytest.fixture(scope="module")
 def users(engine: Engine) -> Iterator[dict[str, str]]:
     """Two signed-up users, each linked to a Firebase uid."""
-    from app.db.platform_models import PlatformUserRow, UserIdentityRow  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PlatformUserRow, UserIdentityRow
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     ids = {label: str(uuid.uuid4()) for label in ("a", "b")}
     uids = {label: f"fb-enroll-{label}-{uuid.uuid4().hex[:12]}" for label in ids}
@@ -103,16 +103,16 @@ def users(engine: Engine) -> Iterator[dict[str, str]]:
 
 @pytest.fixture
 def client() -> TestClient:
-    from app.main import app  # noqa: PLC0415
-    from app.rate_limit import reset_preauth_limiter  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.main import app
+    from app.rate_limit import reset_preauth_limiter
+    from fastapi.testclient import TestClient
 
     reset_preauth_limiter()
     return TestClient(app)
 
 
 def _exchange(client: TestClient, firebase_uid: str, enrollment: dict[str, Any]) -> Any:
-    from app.services.auth_code_store import create_auth_code  # noqa: PLC0415
+    from app.services.auth_code_store import create_auth_code
 
     code = create_auth_code(
         id_token=_ISSUED_ID,

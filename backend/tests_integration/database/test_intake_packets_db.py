@@ -65,8 +65,8 @@ def two_practices() -> Iterator[tuple[Engine, str, str]]:
     Two rather than one because the isolation claim here is about the
     schema, and one schema cannot demonstrate a boundary.
     """
-    from app.db.platform_bootstrap import bring_platform_to_head  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.platform_bootstrap import bring_platform_to_head
+    from app.db.provisioning import create_practice_schema
 
     scratch = scratch_db.scratch_name("pablo_packets")
     admin = create_engine(_DB_URL, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
@@ -89,10 +89,10 @@ def two_practices() -> Iterator[tuple[Engine, str, str]]:
 
 def _repo_on(engine: Engine, schema: str):
     """A session pointed at one practice schema, and a repository on it."""
-    from app.repositories.postgres.intake_packet import (  # noqa: PLC0415
+    from app.repositories.postgres.intake_packet import (
         PostgresIntakePacketRepository,
     )
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from sqlalchemy.orm import Session
 
     session = Session(engine)
     session.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -191,7 +191,7 @@ class TestTheDefaultForm:
         A seed the validator would refuse is a form nobody could ever make a
         version 2 of, and nothing else would notice.
         """
-        from app.intake.items import ItemDraft, stored_config, validate_item_list  # noqa: PLC0415
+        from app.intake.items import ItemDraft, stored_config, validate_item_list
 
         engine, schema, _ = two_practices
         session, repo = _repo_on(engine, schema)
@@ -217,7 +217,7 @@ class TestTheDefaultForm:
     def test_re_provisioning_does_not_seed_a_second_copy(
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
-        from app.db.intake_seed import seed_default_intake_packet  # noqa: PLC0415
+        from app.db.intake_seed import seed_default_intake_packet
 
         engine, schema, _ = two_practices
         seed_default_intake_packet(engine, schema)
@@ -277,8 +277,8 @@ class TestAQuestionCarriesItsOwnWording:
     def test_a_question_a_practice_wrote_survives_the_round_trip(
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
-        from app.intake.items import ItemDraft  # noqa: PLC0415
-        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+        from app.intake.items import ItemDraft
+        from app.services.intake_packet_service import IntakePacketService
 
         engine, schema, _ = two_practices
         session, repo = _repo_on(engine, schema)
@@ -316,8 +316,8 @@ class TestAQuestionCarriesItsOwnWording:
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
         """A version 2 is built from version 1's rows, wording included."""
-        from app.intake.items import ItemDraft  # noqa: PLC0415
-        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+        from app.intake.items import ItemDraft
+        from app.services.intake_packet_service import IntakePacketService
 
         engine, schema, _ = two_practices
         session, repo = _repo_on(engine, schema)
@@ -347,7 +347,7 @@ class TestAPacketCarriesATitleForThePersonFillingItIn:
     template, not the chain) and round-trips through the repository."""
 
     def test_it_is_set_read_back_and_cleared(self, two_practices: tuple[Engine, str, str]) -> None:
-        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+        from app.services.intake_packet_service import IntakePacketService
 
         engine, first, _ = two_practices
         session, repo = _repo_on(engine, first)
@@ -380,7 +380,7 @@ class TestTwoPracticesCannotSeeEachOther:
     def test_a_form_created_in_one_is_invisible_in_the_other(
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
-        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+        from app.services.intake_packet_service import IntakePacketService
 
         engine, first, second = two_practices
         author = str(uuid.uuid4())
@@ -426,7 +426,7 @@ class TestTheDatabaseEnforcesWhatTheCodeAssumes:
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
         """The CHECK is the backstop under the discriminated union."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         engine, schema, _ = two_practices
         session, repo = _repo_on(engine, schema)
@@ -449,7 +449,7 @@ class TestTheDatabaseEnforcesWhatTheCodeAssumes:
     def test_two_items_cannot_share_a_key_in_one_version(
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         engine, schema, _ = two_practices
         session, repo = _repo_on(engine, schema)
@@ -473,7 +473,7 @@ class TestTheDatabaseEnforcesWhatTheCodeAssumes:
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
         """The cascades are declared; this is the check that they arrived."""
-        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+        from app.services.intake_packet_service import IntakePacketService
 
         engine, schema, _ = two_practices
         session, repo = _repo_on(engine, schema)
@@ -481,7 +481,7 @@ class TestTheDatabaseEnforcesWhatTheCodeAssumes:
             service = IntakePacketService(repo)
             template_id = str(service.create_template("Throwaway", str(uuid.uuid4()))["id"])
             version_id = str(service.list_versions(template_id)[0]["id"])
-            from app.intake.items import ItemDraft  # noqa: PLC0415
+            from app.intake.items import ItemDraft
 
             service.replace_items(version_id, [ItemDraft(key="reason", item_type="reason")])
             session.flush()

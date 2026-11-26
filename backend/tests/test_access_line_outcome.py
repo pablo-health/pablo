@@ -299,8 +299,8 @@ class TestSessionPeekIsAttributed:
     """
 
     def test_session_peek_binds_the_sign_in_without_a_lookup(self) -> None:
-        from app.auth import idle_session  # noqa: PLC0415
-        from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+        from app.auth import idle_session
+        from app.auth.providers import VerifiedIdentity
 
         verified = VerifiedIdentity(
             provider="firebase",

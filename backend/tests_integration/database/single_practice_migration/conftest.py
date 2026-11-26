@@ -25,13 +25,13 @@ def old_shape(engine: Engine) -> Iterator[Engine]:
     ``practice`` holds the charts and the registry points at it. Restored
     afterwards so the session-scoped template database is left as found.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         DEFAULT_PRACTICE_ID,
         DEFAULT_PRACTICE_OWN_SCHEMA,
         DEFAULT_PRACTICE_SCHEMA,
         PLATFORM_SCHEMA,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Park whatever the shared database already holds under these two names so
     # this test owns them outright. Everything after the first rename runs inside
@@ -113,7 +113,7 @@ def superuser_engine() -> Iterator[Engine]:
 @pytest.fixture
 def identities(old_shape: Engine) -> Iterator[IdentityFixture]:
     """Seed identities and clean them up, whatever the test does to them."""
-    from .helpers import _clear_identities, _seed_identity  # noqa: PLC0415
+    from .helpers import _clear_identities, _seed_identity
 
     engine = old_shape
     seeded: list[str] = []

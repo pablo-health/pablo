@@ -106,19 +106,19 @@ def _app_imported() -> None:
     runs before the function-scoped ``caplog``, so the reconfiguration
     happens first and once.
     """
-    import app.main  # noqa: PLC0415, F401
+    import app.main  # noqa: F401
 
 
 @pytest.fixture(scope="module")
 def practice(engine: Engine) -> Iterator[str]:
     """A provisioned practice with one patient who has both channels on file."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         PlatformUserRow,
         PracticePortalSettingsRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -203,9 +203,9 @@ def self_hosted(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     code to the log. No provider is registered through
     ``app.portal.factory``, so what runs here is the settings path.
     """
-    from app.portal import factory  # noqa: PLC0415
-    from app.rate_limit import reset_portal_limiters  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.portal import factory
+    from app.rate_limit import reset_portal_limiters
+    from app.settings import get_settings
 
     _RecordingSmtp.sent.clear()
     factory.reset_delivery_registrations()
@@ -242,15 +242,15 @@ def _issue_invitation(practice_schema: str, patient_id: str) -> None:
     the route is real: the same factory, the same stores, the same adapters,
     the same transaction.
     """
-    from app.db import create_standalone_session  # noqa: PLC0415
-    from app.portal.db_store import DbPortalAuthStore, DbPortalSessionStore  # noqa: PLC0415
-    from app.portal.factory import (  # noqa: PLC0415
+    from app.db import create_standalone_session
+    from app.portal.db_store import DbPortalAuthStore, DbPortalSessionStore
+    from app.portal.factory import (
         build_invite_link,
         build_portal_auth_service,
         invite_delivery_from_settings,
         sms_gateway_from_settings,
     )
-    from app.portal.practice_routes import ensure_practice_slug  # noqa: PLC0415
+    from app.portal.practice_routes import ensure_practice_slug
 
     delivery = invite_delivery_from_settings()
     sms = sms_gateway_from_settings()
@@ -334,8 +334,8 @@ def test_a_self_hosted_deployment_can_sign_a_patient_in(
 ) -> None:
     """Invite, ask for a code, redeem, rotate, and read a chart — on shipped
     adapters only."""
-    from app.main import app  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.main import app
+    from fastapi.testclient import TestClient
 
     patient_id = practice
     _issue_invitation(_SCHEMA, patient_id)
@@ -379,8 +379,8 @@ def test_the_invitation_is_single_use_against_a_real_database(
     patient_id = practice
     _issue_invitation(_SCHEMA, patient_id)
 
-    from app.main import app  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.main import app
+    from fastapi.testclient import TestClient
 
     client = TestClient(app)
     token = _token_from_the_email()
@@ -404,11 +404,11 @@ def test_the_kill_switch_stops_a_live_session_immediately(
 ) -> None:
     """Revocation is a row, so it takes effect on the next request rather
     than when the token happens to expire."""
-    from app.db import create_standalone_session  # noqa: PLC0415
-    from app.main import app  # noqa: PLC0415
-    from app.portal.db_store import DbPortalSessionStore  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import create_standalone_session
+    from app.main import app
+    from app.portal.db_store import DbPortalSessionStore
+    from app.utcnow import utc_now
+    from fastapi.testclient import TestClient
 
     patient_id = practice
     _issue_invitation(_SCHEMA, patient_id)
@@ -445,8 +445,8 @@ def test_reading_the_number_leaves_no_patient_scope_behind(
     of ``patients`` sees nothing: the number comes back, and afterwards the
     session is as unscoped as it was before.
     """
-    from app.portal.db_store import DbPortalAuthStore  # noqa: PLC0415
-    from app.portal.tenant_gateway import DbPortalTenantGateway  # noqa: PLC0415
+    from app.portal.db_store import DbPortalAuthStore
+    from app.portal.tenant_gateway import DbPortalTenantGateway
 
     # No cleanup here: whatever earlier tests armed, the pool's checkin and
     # the shared ContextVar guard in backend/conftest.py hand this session
@@ -480,7 +480,7 @@ def test_reading_the_number_leaves_no_patient_scope_behind(
 
 def _stored_hash(engine: Engine, token: str) -> str | None:
     """The stored code hash for the challenge this token names."""
-    from app.portal import tokens  # noqa: PLC0415
+    from app.portal import tokens
 
     jti = tokens.verify_invite_token(signing_key=_SIGNING_KEY, token=token).jti
     with engine.connect() as conn:
@@ -494,7 +494,7 @@ def _stored_hash(engine: Engine, token: str) -> str | None:
 
 def _attempts(engine: Engine, token: str) -> int:
     """The stored attempt count for the challenge this token names."""
-    from app.portal import tokens  # noqa: PLC0415
+    from app.portal import tokens
 
     jti = tokens.verify_invite_token(signing_key=_SIGNING_KEY, token=token).jti
     with engine.connect() as conn:

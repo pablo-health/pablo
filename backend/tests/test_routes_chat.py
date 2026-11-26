@@ -696,10 +696,10 @@ class TestPostTransferAccess:
             )
 
             # Swap the request identity to B and assert B inherits the chat.
-            from app.auth.service import (  # noqa: PLC0415 — local override scope
+            from app.auth.service import (
                 require_baa_acceptance,
             )
-            from app.models import User  # noqa: PLC0415
+            from app.models import User
 
             b = User(
                 id="clinician-b",

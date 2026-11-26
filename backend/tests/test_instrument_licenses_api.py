@@ -88,7 +88,7 @@ class TestTheCatalogue:
     def test_it_lists_every_instrument_the_engine_knows(
         self, instrument_client: TestClient
     ) -> None:
-        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY  # noqa: PLC0415
+        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY
 
         codes = {row["code"] for row in instrument_client.get(BASE).json()}
         assert codes == set(INSTRUMENT_REGISTRY)

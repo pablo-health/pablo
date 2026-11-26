@@ -48,7 +48,7 @@ def _request(identity: object | None) -> SimpleNamespace:
 
 
 def _identity(email: str, *, verified: bool) -> object:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
 
     return VerifiedIdentity(
         provider="firebase",
@@ -62,8 +62,8 @@ def _identity(email: str, *, verified: bool) -> object:
 
 @pytest.fixture
 def session(engine: Engine) -> Iterator[Session]:
-    from app.db import _current_tenant_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db import _current_tenant_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(engine) as s:
         yield s
@@ -72,7 +72,7 @@ def session(engine: Engine) -> Iterator[Session]:
 
 
 def _prepare(session: Session, identity: object | None) -> tuple[str | None, str | None]:
-    from app.db.middleware import DatabaseSessionMiddleware  # noqa: PLC0415
+    from app.db.middleware import DatabaseSessionMiddleware
 
     with patch("app.auth.service.verify_token", return_value=identity):
         return DatabaseSessionMiddleware._prepare(_request(identity), session)  # type: ignore[arg-type] -- the prelude reads only headers and state
@@ -106,7 +106,7 @@ def test_an_unauthenticated_request_keeps_the_default_schema(session: Session) -
 
 
 def test_a_resolved_request_runs_on_its_practice(session: Session) -> None:
-    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA
 
     with patch(
         "app.auth.service._resolve_practice_from_email",
@@ -120,7 +120,7 @@ def test_a_resolved_request_runs_on_its_practice(session: Session) -> None:
 
 @pytest.mark.parametrize("prepare", ["cleared", "default"])
 def test_a_session_with_no_practice_has_no_practice_id(session: Session, prepare: str) -> None:
-    from app.db import clear_tenant_schema, current_practice_schema  # noqa: PLC0415
+    from app.db import clear_tenant_schema, current_practice_schema
 
     if prepare == "cleared":
         clear_tenant_schema(session)
@@ -130,7 +130,7 @@ def test_a_session_with_no_practice_has_no_practice_id(session: Session, prepare
 
 
 def test_a_resolved_session_names_its_practice(session: Session) -> None:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         DEFAULT_PRACTICE_OWN_SCHEMA,
         current_practice_schema,
         set_tenant_schema,
@@ -145,14 +145,14 @@ _ROUTE = {"ehr_system": "guard", "route_name": "r"}
 
 
 def _stamps() -> dict[str, object]:
-    from app.utcnow import utc_now  # noqa: PLC0415
+    from app.utcnow import utc_now
 
     now = utc_now()
     return {"created_at": now, "updated_at": now}
 
 
 def _route_row() -> object:
-    from app.db.models import EhrRouteRow  # noqa: PLC0415
+    from app.db.models import EhrRouteRow
 
     return EhrRouteRow(id=f"guard-{uuid.uuid4().hex[:12]}", **_ROUTE, **_stamps())
 
@@ -169,10 +169,10 @@ def test_a_flushed_write_to_the_template_is_refused_through_the_middleware(
     engine: Engine, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The commit-time check saw nothing once a repository had flushed; this write must not land."""
-    from app.db import get_db_session  # noqa: PLC0415
-    from app.db.middleware import DatabaseSessionMiddleware  # noqa: PLC0415
-    from fastapi import FastAPI  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import get_db_session
+    from app.db.middleware import DatabaseSessionMiddleware
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
     app = FastAPI()
     app.add_middleware(DatabaseSessionMiddleware)
@@ -193,13 +193,13 @@ def test_a_flushed_write_to_the_template_is_refused_through_the_middleware(
 
 
 def test_an_insert_statement_into_the_template_is_refused(engine: Engine) -> None:
-    from app.db import set_tenant_schema  # noqa: PLC0415
-    from app.db.models import EhrRouteRow  # noqa: PLC0415
-    from app.db.template_write_guard import (  # noqa: PLC0415
+    from app.db import set_tenant_schema
+    from app.db.models import EhrRouteRow
+    from app.db.template_write_guard import (
         TemplateSchemaWriteError,
         guard_template_writes,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(engine) as s:
         guard_template_writes(s)
@@ -212,11 +212,11 @@ def test_an_insert_statement_into_the_template_is_refused(engine: Engine) -> Non
 
 def test_a_platform_write_on_the_default_path_is_not_refused(engine: Engine) -> None:
     """Tables with an explicit schema land where they say, whatever the path."""
-    from app.db import set_tenant_schema  # noqa: PLC0415
-    from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
-    from app.db.template_write_guard import guard_template_writes  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db import set_tenant_schema
+    from app.db.platform_models import EmailTenantMappingRow
+    from app.db.template_write_guard import guard_template_writes
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session as OrmSession
 
     email = f"guard-{uuid.uuid4().hex[:8]}@example.invalid"
     with OrmSession(engine) as s:
@@ -231,8 +231,8 @@ def test_a_platform_write_on_the_default_path_is_not_refused(engine: Engine) -> 
 
 def test_an_unguarded_session_may_build_the_template(engine: Engine) -> None:
     """Provisioning writes the template on purpose and never arms the guard."""
-    from app.db import set_tenant_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db import set_tenant_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(engine) as s:
         set_tenant_schema(s, "practice")
@@ -248,10 +248,10 @@ def test_a_schema_set_in_a_worker_thread_survives_a_mid_request_commit(engine: E
     commit hands the connection back, the next transaction must still get the
     schema from the session itself.
     """
-    import threading  # noqa: PLC0415
+    import threading
 
-    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, set_tenant_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, set_tenant_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(engine) as s:
         worker = threading.Thread(target=set_tenant_schema, args=(s, DEFAULT_PRACTICE_OWN_SCHEMA))
@@ -272,15 +272,15 @@ def test_a_session_cleared_in_a_worker_thread_stays_off_the_template_after_a_com
     After a commit hands the connection back, the next transaction must come
     back with no practice schema, not on the template the ContextVar names.
     """
-    import threading  # noqa: PLC0415
+    import threading
 
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         DEFAULT_PRACTICE_SCHEMA,
         _current_tenant_schema,
         clear_tenant_schema,
         set_tenant_schema,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(engine) as s:
         set_tenant_schema(s, DEFAULT_PRACTICE_SCHEMA)

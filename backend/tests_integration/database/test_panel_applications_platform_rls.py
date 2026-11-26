@@ -59,11 +59,11 @@ class _ArmedSession:
     """
 
     def __init__(self, engine: Engine, user_id: str) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_user_id,
             arm_current_user_id,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         self._uid_token = _current_user_id.set(user_id)
         self.session = OrmSession(bind=engine)
@@ -71,7 +71,7 @@ class _ArmedSession:
         arm_current_user_id(self.session, user_id)
 
     def close(self) -> None:
-        from app.db import _current_user_id  # noqa: PLC0415
+        from app.db import _current_user_id
 
         self.session.close()
         _current_user_id.reset(self._uid_token)

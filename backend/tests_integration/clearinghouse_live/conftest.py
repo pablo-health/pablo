@@ -85,7 +85,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(pytest.mark.skip(reason=reason))
         return
 
-    from app.claims.credentials import mode_for_key  # noqa: PLC0415
+    from app.claims.credentials import mode_for_key
 
     if mode_for_key(key) != "test":
         pytest.exit(
@@ -148,7 +148,7 @@ class LiveClient:
 def _build_live_client(
     credentials: ClearinghouseCredentials, recorder: ResponseRecorder
 ) -> LiveClient:
-    from app.claims.stedi import StediClearinghouseClient  # noqa: PLC0415
+    from app.claims.stedi import StediClearinghouseClient
 
     http = httpx.Client(timeout=_REQUEST_TIMEOUT_SECONDS, event_hooks={"response": [recorder]})
     return LiveClient(
@@ -161,7 +161,7 @@ def _build_live_client(
 
 @pytest.fixture(scope="session")
 def live() -> Iterator[LiveClient]:
-    from app.claims.credentials import ClearinghouseCredentials, mode_for_key  # noqa: PLC0415
+    from app.claims.credentials import ClearinghouseCredentials, mode_for_key
 
     key = _live_key()
     assert key is not None
@@ -285,7 +285,7 @@ class SubmittedClaim:
 
 @pytest.fixture(scope="session")
 def submitted_claim(live: LiveClient) -> SubmittedClaim:
-    from app.models.claims_transport import ClaimSubmissionRequest  # noqa: PLC0415
+    from app.models.claims_transport import ClaimSubmissionRequest
 
     body = submission_body(fresh_control_number())
     key = fresh_idempotency_key()

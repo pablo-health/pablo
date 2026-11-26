@@ -198,8 +198,8 @@ class TestSendMessage:
         # 200. We swap in a fresh chat repo whose access set is keyed
         # to a single (patient, user) pair so the foreign override
         # below has no grant.
-        from app.repositories import InMemoryChatRepository  # noqa: PLC0415 — local
-        from app.routes.chat import (  # noqa: PLC0415
+        from app.repositories import InMemoryChatRepository
+        from app.routes.chat import (
             get_chat_repository_dep,
         )
 

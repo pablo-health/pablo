@@ -64,8 +64,8 @@ SPEC = {
 @pytest.fixture(scope="module")
 def two_practices() -> Iterator[tuple[Engine, str, str]]:
     """A scratch database with two freshly-provisioned practice schemas."""
-    from app.db.platform_bootstrap import bring_platform_to_head  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.platform_bootstrap import bring_platform_to_head
+    from app.db.provisioning import create_practice_schema
 
     scratch = scratch_db.scratch_name("pablo_note_types")
     admin = create_engine(_DB_URL, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
@@ -87,10 +87,10 @@ def two_practices() -> Iterator[tuple[Engine, str, str]]:
 
 
 def _repo_on(engine: Engine, schema: str) -> tuple[Session, PostgresPracticeNoteTypeRepository]:
-    from app.repositories.postgres.practice_note_type import (  # noqa: PLC0415
+    from app.repositories.postgres.practice_note_type import (
         PostgresPracticeNoteTypeRepository,
     )
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from sqlalchemy.orm import Session
 
     session = Session(engine)
     session.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -165,7 +165,7 @@ class TestVersions:
             session.close()
 
     def test_a_version_number_is_taken_once(self, two_practices: tuple[Engine, str, str]) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         engine, _, schema = two_practices
         session, repo = _repo_on(engine, schema)

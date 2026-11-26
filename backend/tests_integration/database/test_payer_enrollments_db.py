@@ -63,7 +63,7 @@ _PROFILE = {
 @pytest.fixture(scope="module", autouse=True)
 def _encryption_key() -> Iterator[None]:
     """The billing profile's tax id is encrypted with the calendar-token key."""
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     previous = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY")
     os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = base64.b64encode(os.urandom(32)).decode()
@@ -78,7 +78,7 @@ def _encryption_key() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -96,12 +96,12 @@ class _TenantSession:
     """A tenant session armed as one clinician, the way a worker opens one."""
 
     def __init__(self, engine: Engine, schema: str, user_id: str) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_tenant_schema,
             _current_user_id,
             arm_current_user_id,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         self._schema_token = _current_tenant_schema.set(schema)
         self._uid_token = _current_user_id.set(user_id)
@@ -110,7 +110,7 @@ class _TenantSession:
         arm_current_user_id(self.session, user_id)
 
     def close(self) -> None:
-        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id
 
         self.session.close()
         _current_tenant_schema.reset(self._schema_token)
@@ -118,8 +118,8 @@ class _TenantSession:
 
 
 def _reminders_visible_to(engine: Engine, schema: str, user_id: str) -> list[Any]:
-    from app.db.models import TaskRow  # noqa: PLC0415
-    from sqlalchemy import select  # noqa: PLC0415
+    from app.db.models import TaskRow
+    from sqlalchemy import select
 
     scoped = _TenantSession(engine, schema, user_id)
     try:
@@ -171,11 +171,11 @@ class TestWorkerRaisedReminder:
     def test_action_required_lands_as_the_owners_reminder_and_resolves(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.claims.enrollment import refresh_enrollments, request_enrollments  # noqa: PLC0415
-        from app.db.models import PayerEnrollmentRow, PayerRow  # noqa: PLC0415
-        from app.services.practice_billing_profile import update_billing_profile  # noqa: PLC0415
-        from sqlalchemy import select  # noqa: PLC0415
-        from tests.enrollment_fakes import (  # noqa: PLC0415
+        from app.claims.enrollment import refresh_enrollments, request_enrollments
+        from app.db.models import PayerEnrollmentRow, PayerRow
+        from app.services.practice_billing_profile import update_billing_profile
+        from sqlalchemy import select
+        from tests.enrollment_fakes import (
             INSTRUCTIONS,
             TEST_PAYER_ID,
             FakeClearinghouse,

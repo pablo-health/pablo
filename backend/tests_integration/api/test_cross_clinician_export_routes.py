@@ -115,7 +115,7 @@ class _Caller:
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -133,7 +133,7 @@ def _arming_here_stays_here() -> Iterator[None]:
 @pytest.fixture(scope="module", autouse=True)
 def _encryption_key() -> Iterator[None]:
     """The tax id is stored encrypted; the superbill and the claim exports decrypt it."""
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     previous = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY")
     os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = base64.b64encode(os.urandom(32)).decode()
@@ -151,7 +151,7 @@ def _encryption_key() -> Iterator[None]:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -175,13 +175,13 @@ def _open_session(engine: Engine, schema: str, user_id: str) -> tuple[Session, t
     ``after_begin`` listener reads them, and a module fixture runs before any
     per-test reset, so whatever an earlier module left armed must not leak in.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     tokens = (
         _current_tenant_schema.set(schema),
@@ -195,7 +195,7 @@ def _open_session(engine: Engine, schema: str, user_id: str) -> tuple[Session, t
 
 
 def _close_session(session: Session, tokens: tuple[Any, ...]) -> None:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -214,11 +214,11 @@ def seed(engine: Engine, tenant_schema: str) -> _Seed:
     Each clinician's rows are written as that clinician, so every row passes
     the same policy a request would have to.
     """
-    from app.repositories.clinician_profile import ClinicianProfile  # noqa: PLC0415
-    from app.repositories.postgres.clinician_profile import (  # noqa: PLC0415
+    from app.repositories.clinician_profile import ClinicianProfile
+    from app.repositories.postgres.clinician_profile import (
         PostgresClinicianProfileRepository,
     )
-    from app.services.practice_billing_profile import update_billing_profile  # noqa: PLC0415
+    from app.services.practice_billing_profile import update_billing_profile
 
     s = _Seed()
     now = datetime.now(UTC).replace(microsecond=0)
@@ -272,7 +272,7 @@ def seed(engine: Engine, tenant_schema: str) -> _Seed:
     return s
 
 
-def _seed_patient(  # noqa: PLR0913 — one row's columns
+def _seed_patient(
     engine: Engine, schema: str, clinician: str, patient: str, first: str, last: str
 ) -> None:
     with engine.begin() as conn:
@@ -298,7 +298,7 @@ def _seed_patient(  # noqa: PLR0913 — one row's columns
         )
 
 
-def _seed_billing(  # noqa: PLR0913 — one chart's billing rows
+def _seed_billing(
     session: Session,
     *,
     clinician: str,
@@ -317,21 +317,21 @@ def _seed_billing(  # noqa: PLR0913 — one chart's billing rows
     is what lets the superbill render; it carries the client's name and
     member id, which is what a leak in a CSV would show.
     """
-    from app.models.coverage import PatientCoverage  # noqa: PLC0415
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+    from app.models.coverage import PatientCoverage
+    from app.repositories.postgres.appointment import (
         PostgresAppointmentRepository,
     )
-    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+    from app.repositories.postgres.claims import PostgresClaimRepository
+    from app.repositories.postgres.coverage import (
         PostgresPatientCoverageRepository,
         PostgresPayerRepository,
     )
-    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
+    from app.repositories.postgres.patient_payment import (
         PostgresPatientPaymentRepository,
     )
-    from app.scheduling_engine.models.appointment import Appointment  # noqa: PLC0415
-    from app.services.coverage_intake import new_payer  # noqa: PLC0415
-    from tests.claims_fixtures import claim, line, person, subscriber_snapshot  # noqa: PLC0415
+    from app.scheduling_engine.models.appointment import Appointment
+    from app.services.coverage_intake import new_payer
+    from tests.claims_fixtures import claim, line, person, subscriber_snapshot
 
     appointment_id, coverage_id = str(uuid.uuid4()), str(uuid.uuid4())
     PostgresAppointmentRepository(session).create(
@@ -404,7 +404,7 @@ def _seed_billing(  # noqa: PLR0913 — one chart's billing rows
     )
 
 
-def _seed_intake_form(  # noqa: PLR0913 — one form's rows
+def _seed_intake_form(
     engine: Engine, schema: str, clinician: str, patient: str, form: str, now: datetime
 ) -> None:
     """A published one-question form, sent by ``clinician`` and handed in."""
@@ -455,7 +455,7 @@ def _seed_intake_form(  # noqa: PLR0913 — one form's rows
 
 
 def _user(user_id: str) -> User:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=user_id,
@@ -473,7 +473,7 @@ def caller() -> _Caller:
 
 
 @pytest.fixture
-def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
+def client(
     fastapi_app: FastAPI,
     engine: Engine,
     tenant_schema: str,
@@ -481,8 +481,8 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
     caller: _Caller,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -491,8 +491,8 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from fastapi.testclient import TestClient
 
     _truncate_audit(engine, tenant_schema)
 
@@ -642,7 +642,7 @@ _ROUTES = (
 
 
 @pytest.mark.parametrize("route", _ROUTES, ids=lambda r: r.name)
-def test_blake_cannot_export_averys_client(  # noqa: PLR0913 — fixtures
+def test_blake_cannot_export_averys_client(
     route: _Route,
     client: TestClient,
     caller: _Caller,

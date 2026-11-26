@@ -1324,8 +1324,8 @@ class TestHookDispatchFromRoutes:
 
 def _wire_portal_address(monkeypatch: pytest.MonkeyPatch) -> None:
     """A practice and a portal link, patched where :mod:`app.portal.notices` reads them."""
-    from app.portal import notices as notices_module  # noqa: PLC0415 — test-local seam
-    from app.portal.practice_routes import PracticeAddress  # noqa: PLC0415
+    from app.portal import notices as notices_module
+    from app.portal.practice_routes import PracticeAddress
 
     monkeypatch.setattr(
         notices_module, "_resolve_practice", lambda _user_id, _email: ("practice-1", "schema")

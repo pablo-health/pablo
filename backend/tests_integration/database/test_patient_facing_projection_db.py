@@ -65,7 +65,7 @@ _CLINICIAN_NOTE = "flat affect again, raise at supervision"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -149,7 +149,7 @@ def seeded(engine: Engine, tenant_schema: str) -> tuple[str, str]:
 
 def _as_patient(engine: Engine, schema: str, patient_id: str):  # type: ignore[no-untyped-def]
     """An ORM session scoped to *schema* with only the patient GUC armed."""
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     session = OrmSession(bind=engine)
     session.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -207,7 +207,7 @@ class TestTheChartReadProjects:
         self, engine: Engine, tenant_schema: str, seeded: tuple[str, str]
     ) -> None:
         """The control: the read works and found the right row."""
-        from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
+        from app.repositories.postgres.patient import PostgresPatientRepository
 
         patient_id, _ = seeded
         session = _as_patient(engine, tenant_schema, patient_id)
@@ -224,7 +224,7 @@ class TestTheChartReadProjects:
     def test_the_withheld_columns_are_not_on_what_comes_back(
         self, engine: Engine, tenant_schema: str, seeded: tuple[str, str]
     ) -> None:
-        from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
+        from app.repositories.postgres.patient import PostgresPatientRepository
 
         patient_id, _ = seeded
         session = _as_patient(engine, tenant_schema, patient_id)
@@ -244,7 +244,7 @@ class TestTheChartReadProjects:
         A column the query does not select cannot be serialised by accident,
         logged by accident, or reached for by a later refactor.
         """
-        from app.repositories.postgres.patient import PATIENT_FACING_COLUMNS  # noqa: PLC0415
+        from app.repositories.postgres.patient import PATIENT_FACING_COLUMNS
 
         selected = {column.key for column in PATIENT_FACING_COLUMNS}
         assert selected == shown_columns(PATIENT_COLUMN_DECISIONS)
@@ -256,7 +256,7 @@ class TestTheCalendarReadProjects:
         self, engine: Engine, tenant_schema: str, seeded: tuple[str, str]
     ) -> None:
         """The control: the read works and found the right row."""
-        from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        from app.repositories.postgres.appointment import (
             PostgresAppointmentRepository,
         )
 
@@ -275,7 +275,7 @@ class TestTheCalendarReadProjects:
     def test_the_withheld_columns_are_not_on_what_comes_back(
         self, engine: Engine, tenant_schema: str, seeded: tuple[str, str]
     ) -> None:
-        from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        from app.repositories.postgres.appointment import (
             PostgresAppointmentRepository,
         )
 
@@ -295,7 +295,7 @@ class TestTheCalendarReadProjects:
         self, engine: Engine, tenant_schema: str, seeded: tuple[str, str]
     ) -> None:
         """Belt and braces: the field is gone, and so is its content."""
-        from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        from app.repositories.postgres.appointment import (
             PostgresAppointmentRepository,
         )
 
@@ -314,7 +314,7 @@ class TestTheCalendarReadProjects:
             assert "F41.1" not in body
 
     def test_the_statement_never_names_a_withheld_column(self) -> None:
-        from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        from app.repositories.postgres.appointment import (
             PATIENT_FACING_COLUMNS,
         )
 

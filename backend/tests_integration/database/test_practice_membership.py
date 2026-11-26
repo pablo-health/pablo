@@ -62,8 +62,8 @@ class _World:
         self.emails: list[str] = []
 
     def practice(self, name: str, *, active: bool = True) -> SimpleNamespace:
-        from app.db.platform_models import PracticeRow  # noqa: PLC0415
-        from app.utcnow import utc_now  # noqa: PLC0415
+        from app.db.platform_models import PracticeRow
+        from app.utcnow import utc_now
 
         practice_id = f"members-{name}-{self.label}"
         schema = f"practice_test_members_{name}_{self.label}"
@@ -90,8 +90,8 @@ class _World:
         ``stored_email`` is what ``users.email`` holds, when it differs from
         the lowercased address the account signs in with.
         """
-        from app.db.platform_models import PlatformUserRow, UserIdentityRow  # noqa: PLC0415
-        from app.utcnow import utc_now  # noqa: PLC0415
+        from app.db.platform_models import PlatformUserRow, UserIdentityRow
+        from app.utcnow import utc_now
 
         user_id = str(uuid.uuid4())
         email = f"{name}-{self.label}@example.invalid".lower()
@@ -123,8 +123,8 @@ class _World:
         account: the row is visible to that session and to no other until the
         request commits.
         """
-        from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
-        from app.utcnow import utc_now  # noqa: PLC0415
+        from app.db.platform_models import PlatformUserRow
+        from app.utcnow import utc_now
 
         user_id = str(uuid.uuid4())
         email = f"{name}-{self.label}@example.invalid".lower()
@@ -135,8 +135,8 @@ class _World:
         return SimpleNamespace(id=user_id, email=email)
 
     def map(self, email: str, practice_id: str) -> None:
-        from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
-        from app.utcnow import utc_now  # noqa: PLC0415
+        from app.db.platform_models import EmailTenantMappingRow
+        from app.utcnow import utc_now
 
         with Session(self.engine) as session:
             session.add(
@@ -151,7 +151,7 @@ class _World:
         self.emails.append(email)
 
     def unmap(self, email: str) -> None:
-        from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
+        from app.db.platform_models import EmailTenantMappingRow
 
         with Session(self.engine) as session:
             session.execute(
@@ -167,8 +167,8 @@ class _World:
         via: str = "invite",
         claimed_email: str | None = None,
     ) -> None:
-        from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
-        from app.utcnow import utc_now  # noqa: PLC0415
+        from app.db.platform_models import PracticeMemberRow
+        from app.utcnow import utc_now
 
         with Session(self.engine) as session:
             session.add(
@@ -184,7 +184,7 @@ class _World:
 
     def membership(self, user_id: str) -> tuple[str, str, str | None, datetime] | None:
         """``(practice_id, joined_via, claimed_email, joined_at)``, or None."""
-        from app.db.platform_models import PracticeMemberRow as M  # noqa: PLC0415
+        from app.db.platform_models import PracticeMemberRow as M
 
         with Session(self.engine) as session:
             row = session.execute(
@@ -195,7 +195,7 @@ class _World:
         return None if row is None else (row[0], row[1], row[2], row[3])
 
     def cleanup(self) -> None:
-        from app.db.platform_models import (  # noqa: PLC0415
+        from app.db.platform_models import (
             EmailTenantMappingRow,
             PlatformUserRow,
             PracticeMemberRow,
@@ -236,7 +236,7 @@ def _no_redis() -> Iterator[None]:
 
 def _token_request(account: SimpleNamespace, email: str) -> tuple[Any, dict[str, Any]]:
     """A request whose sign-in token verified ``email``, resolved to ``account``."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
 
     subject_id = f"sub-{uuid.uuid4().hex[:12]}"
     claims: dict[str, Any] = {"uid": subject_id, "email": email, "email_verified": True}
@@ -258,7 +258,7 @@ def _token_request(account: SimpleNamespace, email: str) -> tuple[Any, dict[str,
 
 def _tenant_context(account: SimpleNamespace, email: str) -> Any:
     """Run the real ``get_tenant_context`` for a request signed in as ``email``."""
-    from app.auth.service import get_tenant_context  # noqa: PLC0415
+    from app.auth.service import get_tenant_context
 
     request, claims = _token_request(account, email)
     with (
@@ -269,7 +269,7 @@ def _tenant_context(account: SimpleNamespace, email: str) -> Any:
 
 
 def _disagreements(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    from app.db.practice_members import MEMBERSHIP_DISAGREES_EVENT  # noqa: PLC0415
+    from app.db.practice_members import MEMBERSHIP_DISAGREES_EVENT
 
     return [r for r in caplog.records if getattr(r, "event", None) == MEMBERSHIP_DISAGREES_EVENT]
 
@@ -297,8 +297,8 @@ def test_a_first_sign_in_through_get_tenant_context_claims_once(world: _World) -
 def test_the_middleware_claims_through_the_identity_row(world: _World) -> None:
     """The middleware holds only the token's identity: it finds the account
     through the identity row and may claim with the address the token verified."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.db.middleware import _resolve_schema_from_request  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.db.middleware import _resolve_schema_from_request
 
     practice = world.practice("p")
     subject_id = f"sub-{uuid.uuid4().hex[:12]}"
@@ -325,7 +325,7 @@ def test_the_middleware_claims_through_the_identity_row(world: _World) -> None:
 def test_a_stored_email_caller_writes_no_membership(world: _World) -> None:
     """The ``_deps`` resolver passes ``users.email``, written at account creation
     and never refreshed. It resolves as before and records nothing."""
-    from app.routes._deps import practice_id_or_409  # noqa: PLC0415
+    from app.routes._deps import practice_id_or_409
 
     practice = world.practice("p")
     account = world.account("stored")
@@ -339,7 +339,7 @@ def test_a_stored_email_caller_writes_no_membership(world: _World) -> None:
 def test_a_claim_after_the_grant_is_revoked_writes_nothing(world: _World) -> None:
     """The revoke commits between the resolver's read and the claim: the claim
     checks the mapping in the same statement, so there is nothing to write."""
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     practice = world.practice("p")
     account = world.account("revoked")
@@ -352,7 +352,7 @@ def test_a_claim_after_the_grant_is_revoked_writes_nothing(world: _World) -> Non
 
 def test_a_claim_with_the_grant_in_place_writes(world: _World) -> None:
     """The control for the case above: the same call, mapping intact."""
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     practice = world.practice("p")
     account = world.account("granted")
@@ -366,7 +366,7 @@ def test_a_claim_with_the_grant_in_place_writes(world: _World) -> None:
 
 def test_a_claim_names_the_practice_the_address_maps_to(world: _World) -> None:
     """An address mapped to P2 cannot claim P1, even if a caller names P1."""
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     p1, p2 = world.practice("one"), world.practice("two")
     account = world.account("elsewhere")
@@ -377,7 +377,7 @@ def test_a_claim_names_the_practice_the_address_maps_to(world: _World) -> None:
 
 
 def test_a_claim_into_an_inactive_practice_writes_nothing(world: _World) -> None:
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     practice = world.practice("gone", active=False)
     account = world.account("late")
@@ -406,7 +406,7 @@ def _in_request(session: Session, run: Any) -> Any:
     """
 
     def body() -> Any:
-        from app.db import publish_request_session, restore_request_session  # noqa: PLC0415
+        from app.db import publish_request_session, restore_request_session
 
         binding = publish_request_session(session)
         try:
@@ -445,8 +445,8 @@ def test_keeping_a_first_request_off_the_template_claims_when_it_commits(
 ) -> None:
     """``_keep_request_off_the_template`` is the claim site the account-creating
     request passes through after ``_resolve_user``: it claims too."""
-    from app.auth.service import _keep_request_off_the_template  # noqa: PLC0415
-    from app.db import _TENANT_SCHEMA_KEY  # noqa: PLC0415
+    from app.auth.service import _keep_request_off_the_template
+    from app.db import _TENANT_SCHEMA_KEY
 
     practice = world.practice("p")
     with Session(engine) as session:
@@ -470,7 +470,7 @@ def test_a_request_that_rolls_back_claims_nothing(
 ) -> None:
     """The rollback takes the account with it; a later commit on the same
     session tries the claim once more, finds no account, and stays quiet."""
-    from app.db.practice_members import _DEFERRED_CLAIMS_KEY  # noqa: PLC0415
+    from app.db.practice_members import _DEFERRED_CLAIMS_KEY
 
     practice = world.practice("p")
     with Session(engine) as session:
@@ -496,7 +496,7 @@ def test_a_claim_outside_a_request_for_an_uncommitted_account_waits_quietly(
 ) -> None:
     """With no request session to wait on, the claim is left to the next
     request: no row, no WARNING. Once the account commits, the claim writes."""
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     practice = world.practice("p")
     with Session(engine) as session:
@@ -566,7 +566,7 @@ def test_an_agreeing_membership_logs_nothing(
 def test_the_backfill_gives_each_mapped_account_its_membership_once(
     world: _World, engine: Engine
 ) -> None:
-    from app.db.practice_members import backfill  # noqa: PLC0415
+    from app.db.practice_members import backfill
 
     # Whatever earlier tests left mapped is given its row first, so the counts
     # below are this test's own.
@@ -579,7 +579,7 @@ def test_the_backfill_gives_each_mapped_account_its_membership_once(
     # Stored with capitals, as an address typed at sign-up can be.
     shouting = accounts[4]
     with Session(engine) as session:
-        from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
+        from app.db.platform_models import PlatformUserRow
 
         session.execute(
             update(PlatformUserRow)
@@ -618,8 +618,8 @@ def test_the_backfill_gives_each_mapped_account_its_membership_once(
 def test_deactivating_a_practice_removes_its_memberships(world: _World, engine: Engine) -> None:
     """``remove_for_practice`` runs in the deactivating transaction: its rows go
     with the deactivation, and nobody else's do."""
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from app.db.practice_members import remove_for_practice  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from app.db.practice_members import remove_for_practice
 
     closing, staying = world.practice("closing"), world.practice("staying")
     leaving = [world.account(f"leaving{i}") for i in range(2)]
@@ -640,8 +640,8 @@ def test_deactivating_a_practice_removes_its_memberships(world: _World, engine: 
 
 
 def test_a_rolled_back_deactivation_keeps_its_memberships(world: _World, engine: Engine) -> None:
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from app.db.practice_members import remove_for_practice  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from app.db.practice_members import remove_for_practice
 
     practice = world.practice("p")
     account = world.account("stays")
@@ -666,7 +666,7 @@ def test_a_rolled_back_deactivation_keeps_its_memberships(world: _World, engine:
 
 
 def _members_of(engine: Engine, practice_id: str) -> int:
-    from app.db.platform_models import PracticeMemberRow as M  # noqa: PLC0415
+    from app.db.platform_models import PracticeMemberRow as M
 
     with Session(engine) as session:
         return int(
@@ -701,8 +701,8 @@ def _deactivate(session: Session, practice_id: str, *, orm: bool) -> int:
     and leaves it pending: a ``text()`` statement does not autoflush, so the
     ``UPDATE`` reaches the database only at commit, after the ``DELETE``.
     """
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from app.db.practice_members import remove_for_practice  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from app.db.practice_members import remove_for_practice
 
     if orm:
         row = session.get(PracticeRow, practice_id)
@@ -751,7 +751,7 @@ def _race_a_deactivation(
 def test_a_claim_racing_a_deactivation_waits_and_writes_nothing(
     world: _World, engine: Engine, orm: bool
 ) -> None:
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     practice = world.practice("racing")
     account = world.account("racer")
@@ -769,7 +769,7 @@ def test_a_claim_racing_a_deactivation_waits_and_writes_nothing(
 def test_a_backfill_racing_a_deactivation_waits_and_writes_nothing(
     world: _World, engine: Engine
 ) -> None:
-    from app.db.practice_members import BackfillReport, backfill  # noqa: PLC0415
+    from app.db.practice_members import BackfillReport, backfill
 
     backfill(engine)
     practice = world.practice("bfracing")
@@ -791,7 +791,7 @@ def test_a_deactivation_racing_a_claim_in_flight_removes_its_row(
 ) -> None:
     """The claim goes first and is left uncommitted. The deactivation waits for
     it, and its ``DELETE`` then sees the claimed row and removes it."""
-    from app.db.practice_members import _CLAIM_SQL  # noqa: PLC0415
+    from app.db.practice_members import _CLAIM_SQL
 
     practice = world.practice("claimfirst")
     account = world.account("claimer")
@@ -845,7 +845,7 @@ def redis() -> Iterator[FakeRedis]:
 
 def _middleware_request(subject_id: str, email: str) -> Any:
     """What the schema middleware holds: the token's identity, nothing else."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
 
     identity = VerifiedIdentity(
         provider="firebase",
@@ -865,8 +865,8 @@ def _signed_in_request(subject_id: str, email: str) -> Any:
     middleware finds the account through its identity row and leaves what it
     learned on the request for the dependency.
     """
-    from app.auth.service import get_tenant_context  # noqa: PLC0415
-    from app.db.middleware import _resolve_schema_from_request  # noqa: PLC0415
+    from app.auth.service import get_tenant_context
+    from app.db.middleware import _resolve_schema_from_request
 
     request = _middleware_request(subject_id, email)
     schema, _reason = _resolve_schema_from_request(request)
@@ -886,7 +886,7 @@ def _signed_in_request(subject_id: str, email: str) -> Any:
 
 def _resolve(account: SimpleNamespace, email: str) -> tuple[str, str] | None:
     """The auth path's resolution for a verified ``email``."""
-    from app.auth.service import _resolve_practice  # noqa: PLC0415
+    from app.auth.service import _resolve_practice
 
     return _resolve_practice(account.id, email, may_claim=True)
 
@@ -941,7 +941,7 @@ def test_a_signed_in_request_reads_the_membership_once_cold_and_never_warm(
     """The middleware and ``get_tenant_context`` share one answer per request:
     one membership read on a cold cache, none on a warm one, and a disagreement
     logged at most once per request."""
-    from app.db import practice_members  # noqa: PLC0415
+    from app.db import practice_members
 
     p1, p2 = world.practice("one"), world.practice("two")
     subject_id = f"sub-{uuid.uuid4().hex[:12]}"
@@ -969,7 +969,7 @@ def test_without_redis_a_signed_in_request_still_reads_the_membership_once(
     """The request keeps its own answer, so the middleware and
     ``get_tenant_context`` share it with no cache at all; the same for a
     membership in an inactive practice, which Redis never holds."""
-    from app.db import practice_members  # noqa: PLC0415
+    from app.db import practice_members
 
     p1, p2 = world.practice("one"), world.practice("two")
     closed = world.practice("closed", active=False)
@@ -1004,7 +1004,7 @@ def test_the_membership_is_read_before_a_cached_email_answer(
     p1, p2 = world.practice("one"), world.practice("two")
     account = world.account("joins")
     world.map(account.email, p2.id)
-    from app.auth.service import _resolve_practice_from_email  # noqa: PLC0415
+    from app.auth.service import _resolve_practice_from_email
 
     assert _resolve_practice_from_email(account.email) == (p2.id, p2.schema)
     world.join(account.id, p1.id, via="invite")
@@ -1016,7 +1016,7 @@ def test_the_membership_is_read_before_a_cached_email_answer(
 
 
 def _grant(engine: Engine, email: str, practice_id: str) -> None:
-    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+    from app.repositories.postgres.allowlist import (
         PostgresAllowlistRepository,
     )
 
@@ -1026,7 +1026,7 @@ def _grant(engine: Engine, email: str, practice_id: str) -> None:
 
 
 def _revoke(engine: Engine, email: str) -> bool:
-    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+    from app.repositories.postgres.allowlist import (
         PostgresAllowlistRepository,
     )
 
@@ -1037,7 +1037,7 @@ def _revoke(engine: Engine, email: str) -> bool:
 
 
 def _forget_grant(engine: Engine, email: str) -> None:
-    from app.db.platform_models import PlatformAllowedEmailRow  # noqa: PLC0415
+    from app.db.platform_models import PlatformAllowedEmailRow
 
     with Session(engine) as session:
         session.execute(
@@ -1073,8 +1073,8 @@ def test_revoking_by_the_claimed_address_removes_a_member_whose_stored_address_d
 def test_revoking_a_grant_that_names_no_practice_removes_the_claimed_membership(
     world: _World, engine: Engine
 ) -> None:
-    from app.db.platform_models import PlatformAllowedEmailRow  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
+    from app.db.platform_models import PlatformAllowedEmailRow
+    from app.utcnow import utc_now
 
     practice = world.practice("p")
     account = world.account("bare")
@@ -1158,7 +1158,7 @@ def _race_a_revoke(engine: Engine, email: str, write: Callable[[], object]) -> l
     Asserts that the writer waited on the revoke and was still running when
     that was checked. Returns what it returned (or raised).
     """
-    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+    from app.repositories.postgres.allowlist import (
         PostgresAllowlistRepository,
     )
 
@@ -1188,7 +1188,7 @@ def _race_a_revoke(engine: Engine, email: str, write: Callable[[], object]) -> l
 
 
 def test_a_claim_racing_a_revoke_waits_and_writes_nothing(world: _World, engine: Engine) -> None:
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     practice = world.practice("revoking")
     account = world.account("revoked")
@@ -1208,7 +1208,7 @@ def test_a_claim_racing_a_revoke_waits_and_writes_nothing(world: _World, engine:
 
 
 def test_a_backfill_racing_a_revoke_waits_and_writes_nothing(world: _World, engine: Engine) -> None:
-    from app.db.practice_members import backfill  # noqa: PLC0415
+    from app.db.practice_members import backfill
 
     backfill(engine)
     practice = world.practice("bfrevoking")
@@ -1228,7 +1228,7 @@ def test_a_revoke_racing_a_claim_in_flight_removes_its_row(world: _World, engine
     """The claim goes first and is left uncommitted. The revoke's ``DELETE`` of
     the mapping waits for it, and its membership read then sees the claimed row
     and removes it."""
-    from app.db.practice_members import _CLAIM_SQL  # noqa: PLC0415
+    from app.db.practice_members import _CLAIM_SQL
 
     practice = world.practice("claimbeforerevoke")
     account = world.account("claimer")
@@ -1286,7 +1286,7 @@ def _race_an_offboarding(
     Asserts that the writer waited and that the offboarding committed without an
     error. Returns what the writer returned (or raised).
     """
-    from app.db.platform_models import EmailTenantMappingRow, PracticeRow  # noqa: PLC0415
+    from app.db.platform_models import EmailTenantMappingRow, PracticeRow
 
     outcome: list[object] = []
 
@@ -1326,7 +1326,7 @@ def _race_an_offboarding(
 def test_a_claim_racing_an_offboarding_waits_and_writes_nothing(
     world: _World, engine: Engine, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from app.db.practice_members import claim  # noqa: PLC0415
+    from app.db.practice_members import claim
 
     practice = world.practice("offboarding")
     account = world.account("offboarded")
@@ -1348,7 +1348,7 @@ def test_a_claim_racing_an_offboarding_waits_and_writes_nothing(
 def test_a_backfill_racing_an_offboarding_waits_and_writes_nothing(
     world: _World, engine: Engine
 ) -> None:
-    from app.db.practice_members import BackfillReport, backfill  # noqa: PLC0415
+    from app.db.practice_members import BackfillReport, backfill
 
     backfill(engine)
     practice = world.practice("bfoffboarding")
@@ -1367,8 +1367,8 @@ def test_a_backfill_racing_an_offboarding_waits_and_writes_nothing(
 def test_moving_a_member_is_honoured_on_the_next_request(
     world: _World, engine: Engine, redis: FakeRedis
 ) -> None:
-    from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
-    from app.db.practice_resolution_cache import _USER_PREFIX  # noqa: PLC0415
+    from app.db.platform_models import PracticeMemberRow
+    from app.db.practice_resolution_cache import _USER_PREFIX
 
     p1, p2 = world.practice("one"), world.practice("two")
     account = world.account("cached-move")
@@ -1388,8 +1388,8 @@ def test_moving_a_member_is_honoured_on_the_next_request(
 def test_removing_a_membership_is_honoured_on_the_next_request(
     world: _World, engine: Engine, redis: FakeRedis
 ) -> None:
-    from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
-    from app.db.practice_resolution_cache import _USER_PREFIX  # noqa: PLC0415
+    from app.db.platform_models import PracticeMemberRow
+    from app.db.practice_resolution_cache import _USER_PREFIX
 
     practice = world.practice("p")
     account = world.account("cached-remove")
@@ -1409,7 +1409,7 @@ def test_removing_a_membership_is_honoured_on_the_next_request(
 def test_a_bulk_membership_update_is_honoured_on_the_next_request(
     world: _World, engine: Engine, redis: FakeRedis
 ) -> None:
-    from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
+    from app.db.platform_models import PracticeMemberRow
 
     p1, p2 = world.practice("one"), world.practice("two")
     account = world.account("cached-bulk")
@@ -1449,8 +1449,8 @@ def test_deleting_an_account_drops_its_cached_answer(
 ) -> None:
     """The database removes the membership by cascade, which no flush shows;
     deleting the account's row drops its entry itself."""
-    from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
-    from app.db.practice_resolution_cache import _user_key  # noqa: PLC0415
+    from app.db.platform_models import PlatformUserRow
+    from app.db.practice_resolution_cache import _user_key
 
     practice = world.practice("p")
     account = world.account("deleted")
@@ -1477,7 +1477,7 @@ def _revoke_without_the_membership(engine: Engine, email: str) -> None:
     The grant and the mapping go; the membership stays.
     """
     _forget_grant(engine, email)
-    from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
+    from app.db.platform_models import EmailTenantMappingRow
 
     with Session(engine) as session:
         session.execute(delete(EmailTenantMappingRow).where(EmailTenantMappingRow.email == email))
@@ -1490,7 +1490,7 @@ def test_the_cleanup_removes_a_membership_a_revoke_left_behind(
     """Left behind, the membership routes the removed account back into its old
     practice; after the cleanup the account resolves nowhere, through the
     middleware and ``get_tenant_context`` as served."""
-    from app.db.practice_members import remove_unmapped_claims  # noqa: PLC0415
+    from app.db.practice_members import remove_unmapped_claims
 
     practice = world.practice("p")
     subject_id = f"sub-{uuid.uuid4().hex[:12]}"
@@ -1514,7 +1514,7 @@ def test_the_cleanup_removes_a_membership_a_revoke_left_behind(
 def test_the_cleanup_keeps_invited_and_mapped_members_and_runs_once(
     world: _World, engine: Engine
 ) -> None:
-    from app.db.practice_members import remove_unmapped_claims  # noqa: PLC0415
+    from app.db.practice_members import remove_unmapped_claims
 
     # Whatever earlier tests left behind goes first, so the counts below are
     # this test's own.
@@ -1568,8 +1568,8 @@ def test_the_cleanup_drops_the_removed_accounts_cached_answers(
 ) -> None:
     """The cleanup writes through no ``Session``, so the cache's listener never
     sees it; the cleanup drops the answers itself."""
-    from app.db.practice_members import remove_unmapped_claims  # noqa: PLC0415
-    from app.db.practice_resolution_cache import _user_key  # noqa: PLC0415
+    from app.db.practice_members import remove_unmapped_claims
+    from app.db.practice_resolution_cache import _user_key
 
     practice = world.practice("p")
     account = world.account("cached-left")

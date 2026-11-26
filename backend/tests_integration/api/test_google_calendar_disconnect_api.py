@@ -73,7 +73,7 @@ _TABLES = (
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -90,7 +90,7 @@ def _arming_here_stays_here() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
     get_settings.cache_clear()
@@ -100,7 +100,7 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -129,7 +129,7 @@ def _empty_tables(engine: Engine, tenant_schema: str) -> None:
 
 
 def _user(*, baa_accepted: bool = True) -> User:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     accepted = datetime(2024, 1, 1, tzinfo=UTC) if baa_accepted else None
     return User(
@@ -146,16 +146,16 @@ def _client(
     app: FastAPI, tenant_schema: str, user: User, monkeypatch: pytest.MonkeyPatch
 ) -> TestClient:
     """A client signed in as ``user``. ``require_baa_acceptance`` is left real."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
         get_current_user_no_mfa,
         get_tenant_context,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from fastapi.testclient import TestClient
 
     identity = VerifiedIdentity(
         provider="test",
@@ -186,7 +186,7 @@ def _client(
 
 @pytest.fixture
 def app() -> Iterator[FastAPI]:
-    from app.main import app as fastapi_app  # noqa: PLC0415
+    from app.main import app as fastapi_app
 
     yield fastapi_app
     fastapi_app.dependency_overrides.clear()
@@ -196,34 +196,34 @@ class _Seeded:
     """What a connected clinician's tenant holds before they disconnect."""
 
     def __init__(self, engine: Engine, schema: str, *, connected: bool = True) -> None:
-        from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-        from app.models.patient import Patient  # noqa: PLC0415
-        from app.patients.identifiers import calendar_scope, clinician_scope  # noqa: PLC0415
-        from app.repositories.external_calendar_event import (  # noqa: PLC0415
+        from app.db import arm_current_user_id, set_tenant_schema
+        from app.models.patient import Patient
+        from app.patients.identifiers import calendar_scope, clinician_scope
+        from app.repositories.external_calendar_event import (
             ExternalCalendarEvent,
         )
-        from app.repositories.google_calendar_token import (  # noqa: PLC0415
+        from app.repositories.google_calendar_token import (
             GoogleCalendarTokenDoc,
         )
-        from app.repositories.patient_source_mapping import (  # noqa: PLC0415
+        from app.repositories.patient_source_mapping import (
             PatientSourceMapping,
         )
-        from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        from app.repositories.postgres.appointment import (
             PostgresAppointmentRepository,
         )
-        from app.repositories.postgres.external_calendar_event import (  # noqa: PLC0415
+        from app.repositories.postgres.external_calendar_event import (
             PostgresExternalCalendarEventRepository,
         )
-        from app.repositories.postgres.google_calendar_token import (  # noqa: PLC0415
+        from app.repositories.postgres.google_calendar_token import (
             PostgresGoogleCalendarTokenRepository,
         )
-        from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
-        from app.repositories.postgres.patient_source_mapping import (  # noqa: PLC0415
+        from app.repositories.postgres.patient import PostgresPatientRepository
+        from app.repositories.postgres.patient_source_mapping import (
             PostgresPatientSourceMappingRepository,
         )
-        from app.scheduling_engine.models.appointment import Appointment  # noqa: PLC0415
-        from app.services.token_encryption import encrypt_tokens  # noqa: PLC0415
-        from sqlalchemy.orm import Session  # noqa: PLC0415
+        from app.scheduling_engine.models.appointment import Appointment
+        from app.services.token_encryption import encrypt_tokens
+        from sqlalchemy.orm import Session
 
         self.engine, self.schema, self.connected = engine, schema, connected
         now = datetime.now(UTC)
@@ -327,8 +327,8 @@ class _Seeded:
         so an unarmed read sees nothing at all, and "nothing left" would pass
         whether or not anything was deleted.
         """
-        from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-        from sqlalchemy.orm import Session  # noqa: PLC0415
+        from app.db import arm_current_user_id, set_tenant_schema
+        from sqlalchemy.orm import Session
 
         with Session(bind=self.engine) as sess:
             set_tenant_schema(sess, self.schema)
@@ -340,7 +340,7 @@ class _Seeded:
         return row[0]
 
     def rows(self, table_name: str, source: str | None = None) -> int:
-        from sqlalchemy import column, func, select, table  # noqa: PLC0415
+        from sqlalchemy import column, func, select, table
 
         rows = table(table_name, column("source"))
         query = select(func.count()).select_from(rows)
@@ -442,7 +442,7 @@ def test_a_failure_after_the_deletes_leaves_every_row_in_place(
     grant is gone; the next sync reports it and a retried disconnect
     finishes the job.
     """
-    from app.calendar_providers import disconnect  # noqa: PLC0415
+    from app.calendar_providers import disconnect
 
     seeded = _Seeded(engine, tenant_schema)
     seeded.assert_seeded()

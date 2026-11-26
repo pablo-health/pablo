@@ -56,7 +56,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs that reference ``has_patient_access``
     # (which lives in ``practice``) resolve during provisioning.

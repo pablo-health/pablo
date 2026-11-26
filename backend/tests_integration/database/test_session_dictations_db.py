@@ -41,7 +41,7 @@ _CLINICIAN = "7a1d3e95-4c2b-5f60-9e18-3b6d8a2c4f71"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -109,8 +109,8 @@ def session_and_note(engine: Engine, tenant_schema: str) -> tuple[str, str, str]
 def test_a_dictation_round_trips_and_records_what_it_became(
     engine: Engine, tenant_schema: str, session_and_note: tuple[str, str, str]
 ) -> None:
-    from app.models.session_dictation import SessionDictation  # noqa: PLC0415
-    from app.repositories.postgres.session_dictation import (  # noqa: PLC0415
+    from app.models.session_dictation import SessionDictation
+    from app.repositories.postgres.session_dictation import (
         PostgresSessionDictationRepository,
     )
 

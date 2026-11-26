@@ -124,7 +124,7 @@ class _Registry:
 
 
 def test_the_registered_owner_signing_in_records_them(registry: _Registry) -> None:
-    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+    from app.db.practice_owner import record_owner_on_sign_in
 
     owner_id, owner_email = registry.account("owner")
     practice_id = registry.practice("declared", owner_email)
@@ -135,7 +135,7 @@ def test_the_registered_owner_signing_in_records_them(registry: _Registry) -> No
 
 def test_signing_in_again_changes_nothing(registry: _Registry) -> None:
     """The second sign-in is the common case, and it must be inert."""
-    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+    from app.db.practice_owner import record_owner_on_sign_in
 
     owner_id, owner_email = registry.account("owner")
     practice_id = registry.practice("declared", owner_email)
@@ -152,7 +152,7 @@ def test_another_account_never_becomes_the_owner(registry: _Registry) -> None:
     there first" and "the rule reads the email" fail the same assertion if the
     owner is already recorded, and only the second is the property here.
     """
-    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+    from app.db.practice_owner import record_owner_on_sign_in
 
     _, owner_email = registry.account("owner")
     colleague_id, colleague_email = registry.account("colleague")
@@ -163,7 +163,7 @@ def test_another_account_never_becomes_the_owner(registry: _Registry) -> None:
 
 
 def test_the_email_test_ignores_case_and_padding(registry: _Registry) -> None:
-    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+    from app.db.practice_owner import record_owner_on_sign_in
 
     owner_id, owner_email = registry.account("owner")
     practice_id = registry.practice("declared", f"  {owner_email.upper()}  ")
@@ -181,7 +181,7 @@ def test_a_practice_registered_under_no_email_takes_its_first_account(
     the answer — and the second account still is not, because the column is
     only ever written while it is empty.
     """
-    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+    from app.db.practice_owner import record_owner_on_sign_in
 
     first_id, first_email = registry.account("first")
     second_id, second_email = registry.account("second")
@@ -198,7 +198,7 @@ def test_an_account_with_no_identity_row_yet_records_nothing(registry: _Registry
     column is uuid, so that id must never reach the statement: nothing is
     recorded, nothing raises, and the sign-in with the row in place records it.
     """
-    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+    from app.db.practice_owner import record_owner_on_sign_in
 
     owner_id, owner_email = registry.account("owner")
     practice_id = registry.practice("declared", owner_email)
@@ -217,7 +217,7 @@ def test_an_account_with_no_identity_row_yet_records_nothing(registry: _Registry
 def test_reconcile_fills_the_owner_from_the_registered_email(
     engine: Engine, registry: _Registry
 ) -> None:
-    from app.db.practice_owner import reconcile_practice_owners  # noqa: PLC0415
+    from app.db.practice_owner import reconcile_practice_owners
 
     owner_id, owner_email = registry.account("owner")
     practice_id = registry.practice("legacy", owner_email)
@@ -234,7 +234,7 @@ def test_reconcile_leaves_a_practice_whose_email_has_no_account(
     Refusing to offer times in a diary is recoverable; arming the wrong
     principal over one is not.
     """
-    from app.db.practice_owner import reconcile_practice_owners  # noqa: PLC0415
+    from app.db.practice_owner import reconcile_practice_owners
 
     practice_id = registry.practice("stranger", f"nobody-{uuid.uuid4().hex[:8]}@example.test")
 
@@ -245,7 +245,7 @@ def test_reconcile_leaves_a_practice_whose_email_has_no_account(
 def test_reconcile_leaves_a_practice_registered_under_no_email(
     engine: Engine, registry: _Registry
 ) -> None:
-    from app.db.practice_owner import reconcile_practice_owners  # noqa: PLC0415
+    from app.db.practice_owner import reconcile_practice_owners
 
     practice_id = registry.practice("undeclared", "")
 
@@ -260,7 +260,7 @@ def test_reconcile_is_idempotent_and_never_reassigns(engine: Engine, registry: _
     so a reconcile that re-read it every run would move a live practice's
     principal underneath it.
     """
-    from app.db.practice_owner import reconcile_practice_owners  # noqa: PLC0415
+    from app.db.practice_owner import reconcile_practice_owners
 
     owner_id, owner_email = registry.account("owner")
     other_id, _ = registry.account("other")

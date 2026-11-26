@@ -76,7 +76,7 @@ class AuditReviewHarness:
 
     def seed_user(self, name: str = "Alex Reviewer") -> str:
         """Create a platform user row; returns the user id."""
-        from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
+        from app.db.platform_models import PlatformUserRow
 
         uid = str(uuid.uuid4())
         self.session.add(
@@ -104,7 +104,7 @@ class AuditReviewHarness:
         audit row, so one is appended at ``created_days_ago`` unless the
         test wants a patient with no recorded create (``log_create=False``).
         """
-        from app.models import Patient  # noqa: PLC0415
+        from app.models import Patient
 
         created = _now() - timedelta(days=created_days_ago)
         patient = Patient(
@@ -124,7 +124,7 @@ class AuditReviewHarness:
             )
         return patient.id
 
-    def audit(  # noqa: PLR0913 — one keyword arg per audit-row column by design
+    def audit(
         self,
         user_id: str,
         action: str,
@@ -137,7 +137,7 @@ class AuditReviewHarness:
         changes: dict[str, Any] | None = None,
     ) -> None:
         """Append one audit row at ``now - days_ago - hours_ago``."""
-        from app.models.audit import AuditLogEntry  # noqa: PLC0415
+        from app.models.audit import AuditLogEntry
 
         ts = _now() - timedelta(days=days_ago, hours=hours_ago)
         self.audit_repo.append(
@@ -162,7 +162,7 @@ class AuditReviewHarness:
         start_days_from_now: float = 0.0,
         status: str = "scheduled",
     ) -> None:
-        from app.scheduling_engine.models.appointment import Appointment  # noqa: PLC0415
+        from app.scheduling_engine.models.appointment import Appointment
 
         start = _now() + timedelta(days=start_days_from_now)
         self.appointment_repo.create(
@@ -193,7 +193,7 @@ class AuditReviewHarness:
         session_number: int = 1,
         status: str = "finalized",
     ) -> None:
-        from app.models.session import TherapySession, Transcript  # noqa: PLC0415
+        from app.models.session import TherapySession, Transcript
 
         session_date = _now() - timedelta(days=days_ago)
         self.session_repo.create(
@@ -220,10 +220,10 @@ def audit_review_engine() -> Iterator[Engine]:
     """ORM-materialized schema, same rationale as ``test_audit_writes``:
     migration correctness is proven elsewhere; the service sees the
     schema the running app uses."""
-    from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA  # noqa: PLC0415
-    from app.db.models import Base  # noqa: PLC0415
-    from app.db.platform_models import PlatformBase  # noqa: PLC0415
-    from sqlalchemy import create_engine, text  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
+    from app.db.models import Base
+    from app.db.platform_models import PlatformBase
+    from sqlalchemy import create_engine, text
 
     db_url = os.environ["DATABASE_URL"]
     eng = create_engine(db_url, pool_pre_ping=True)
@@ -242,19 +242,19 @@ def audit_review_engine() -> Iterator[Engine]:
 @pytest.fixture
 def audit_review(audit_review_engine: Engine) -> Iterator[AuditReviewHarness]:
     """Function-scoped harness over a clean slate of all involved tables."""
-    from app.db import _current_tenant_schema, set_tenant_schema  # noqa: PLC0415
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+    from app.db import _current_tenant_schema, set_tenant_schema
+    from app.repositories.postgres.appointment import (
         PostgresAppointmentRepository,
     )
-    from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
-    from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
-    from app.repositories.postgres.session import (  # noqa: PLC0415
+    from app.repositories.postgres.audit import PostgresAuditRepository
+    from app.repositories.postgres.patient import PostgresPatientRepository
+    from app.repositories.postgres.session import (
         PostgresTherapySessionRepository,
     )
-    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
-    from app.services.audit_review_service import AuditReviewService  # noqa: PLC0415
-    from sqlalchemy import text  # noqa: PLC0415
-    from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
+    from app.repositories.postgres.user import PostgresUserRepository
+    from app.services.audit_review_service import AuditReviewService
+    from sqlalchemy import text
+    from sqlalchemy.orm import sessionmaker
 
     factory = sessionmaker(bind=audit_review_engine, expire_on_commit=False)
     session = factory()

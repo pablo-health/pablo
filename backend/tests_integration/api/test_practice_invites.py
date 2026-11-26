@@ -227,8 +227,8 @@ class _Harness:
 
     def next_request(self, identity: VerifiedIdentity) -> tuple[str | None, Any]:
         """One signed-in request through the middleware and ``get_tenant_context``."""
-        from app.auth.service import get_tenant_context  # noqa: PLC0415
-        from app.db.middleware import _resolve_schema_from_request  # noqa: PLC0415
+        from app.auth.service import get_tenant_context
+        from app.db.middleware import _resolve_schema_from_request
 
         request = SimpleNamespace(state=SimpleNamespace(verified_identity=identity))
         schema, _reason = _resolve_schema_from_request(request)  # type: ignore[arg-type]
@@ -375,7 +375,7 @@ def test_an_account_with_another_address_redeems_and_is_in_the_practice(
 def test_revoking_the_granted_address_takes_the_invited_member_out(harness: _Harness) -> None:
     """``DELETE /api/admin/allowlist/{email}`` is how an operator removes a
     clinician; for an invited member it has to remove the membership too."""
-    from app.repositories.postgres.allowlist import PostgresAllowlistRepository  # noqa: PLC0415
+    from app.repositories.postgres.allowlist import PostgresAllowlistRepository
 
     _id, token = harness.invite(_address("revoked-invited"))
     bee = harness.sign_in(_address("revoked-redeemer"))

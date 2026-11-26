@@ -132,7 +132,7 @@ MODULE_PREFIXES: tuple[tuple[str, str], ...] = (
 def real_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[FastAPI, list[str]]]:
     """The assembled application, with a signed-in client whose practice has
     turned EVERY module off, and a record of each gate lookup."""
-    from app.main import app  # noqa: PLC0415
+    from app.main import app
 
     looked_up: list[str] = []
 
@@ -199,7 +199,7 @@ def test_every_patient_route_is_gated_or_deliberately_not() -> None:
     client of a practice that turned its module off — or of a deployment that
     does not serve it — and every other test stays green.
     """
-    from app.main import app  # noqa: PLC0415
+    from app.main import app
 
     gated = tuple(prefix for prefix, _module in MODULE_PREFIXES)
     unclassified = sorted(

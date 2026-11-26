@@ -91,7 +91,7 @@ class _PoolWatch:
 @contextmanager
 def _watching_main_pool(monkeypatch: pytest.MonkeyPatch) -> Iterator[_PoolWatch]:
     """Record main-pool checkouts/checkins and each real release, for the block."""
-    from app import db  # noqa: PLC0415
+    from app import db
 
     real_release = db.release_db_connection
     pool = db.get_engine().pool
@@ -135,7 +135,7 @@ def _release_is_a_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -163,8 +163,8 @@ def client_as(
     RLS principal the way the production dependency does, so a second
     clinician is held to their own rows by the database, not by the route.
     """
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -173,9 +173,9 @@ def client_as(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.models import User
+    from fastapi.testclient import TestClient
 
     def _stash_identity(request: Request) -> None:
         request.state.verified_identity = VerifiedIdentity(
@@ -419,7 +419,7 @@ def test_watch_sees_a_checkout_after_a_late_query(
     seeded: str, client_as: Callable[[str], TestClient], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The counter can fail: a query after the release shows up as a checkout."""
-    from app import db  # noqa: PLC0415
+    from app import db
 
     client = client_as(_CLINICIAN_A)
     with _watching_main_pool(monkeypatch) as watch:

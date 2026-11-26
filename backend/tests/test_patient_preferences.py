@@ -122,7 +122,7 @@ def interpreter_kind() -> Iterator[str]:
         )
     )
     yield kind
-    from app.preferences import kinds  # noqa: PLC0415
+    from app.preferences import kinds
 
     kinds._REGISTRY.pop(kind, None)
 

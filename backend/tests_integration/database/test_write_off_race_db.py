@@ -52,7 +52,7 @@ _WRITE_OFF_CENTS = 700
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A schema built by the real provisioning path, so the lock runs on shipped DDL."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -82,7 +82,7 @@ def _armed(engine: Engine, schema: str) -> Connection:
 @pytest.fixture
 def patient_owing_1000(engine: Engine, tenant_schema: str) -> str:
     """One client, granted to the clinician, owing exactly ``_BALANCE_CENTS``."""
-    from tests_integration.database.test_patient_charges_db import _seed_patient  # noqa: PLC0415
+    from tests_integration.database.test_patient_charges_db import _seed_patient
 
     pid = _seed_patient(engine, tenant_schema, _CLINICIAN, "Raceworth")
     conn = _armed(engine, tenant_schema)
@@ -106,9 +106,9 @@ def patient_owing_1000(engine: Engine, tenant_schema: str) -> str:
 def test_two_concurrent_write_offs_cannot_together_exceed_the_balance(
     engine: Engine, tenant_schema: str, patient_owing_1000: str
 ) -> None:
-    from app.payments.balance import patient_balance  # noqa: PLC0415
-    from app.repositories.patient_payment import WriteOffExceedsBalanceError  # noqa: PLC0415
-    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
+    from app.payments.balance import patient_balance
+    from app.repositories.patient_payment import WriteOffExceedsBalanceError
+    from app.repositories.postgres.patient_payment import (
         PostgresPatientPaymentRepository,
     )
 

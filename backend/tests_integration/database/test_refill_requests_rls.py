@@ -55,7 +55,7 @@ _STRANGER_CLINICIAN = "b27f4d19-8e60-5a3c-9f17-4d2c6e81a0b3"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -155,8 +155,8 @@ def _clinician_repository(schema: str, user_id: str) -> Iterator[PostgresRefillR
     what keeps the ``after_begin`` listener from re-arming a principal some
     earlier test in the run left behind.
     """
-    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
-    from app.repositories.postgres.refill_request import (  # noqa: PLC0415
+    from app.db.tenant_session import tenant_db_session
+    from app.repositories.postgres.refill_request import (
         PostgresRefillRequestRepository,
     )
 
@@ -175,13 +175,13 @@ def _patient_repository(
     the duration, because the ``after_begin`` listener re-arms from them on
     every transaction.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
         arm_current_patient_id,
     )
-    from app.repositories.postgres.refill_request import (  # noqa: PLC0415
+    from app.repositories.postgres.refill_request import (
         PostgresRefillRequestRepository,
     )
 
@@ -271,7 +271,7 @@ class TestTableShipped:
         assert row["policies"] >= 1
 
     def test_template_columns_match_the_model(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.models import RefillRequestRow  # noqa: PLC0415
+        from app.db.models import RefillRequestRow
 
         with engine.connect() as conn:
             columns = set(
@@ -397,7 +397,7 @@ class TestDecision:
     def test_is_made_once_and_refused_to_a_stranger(
         self, engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
     ) -> None:
-        from app.repositories.refill_request import (  # noqa: PLC0415
+        from app.repositories.refill_request import (
             RefillRequestAccessDeniedError,
             RefillRequestAlreadyDecidedError,
         )
@@ -461,7 +461,7 @@ class TestRunOutAndRisk:
     """
 
     def test_template_has_the_medication_flags(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.models import PatientMedicationRow  # noqa: PLC0415
+        from app.db.models import PatientMedicationRow
 
         with engine.connect() as conn:
             columns = set(
@@ -479,7 +479,7 @@ class TestRunOutAndRisk:
         assert {"controlled", "interruption_risk"} <= columns
 
     def test_the_queue_carries_run_out_and_flags(self, engine: Engine, tenant_schema: str) -> None:
-        from app.models.refill_request import RefillRisk  # noqa: PLC0415
+        from app.models.refill_request import RefillRisk
 
         patient_id = str(uuid.uuid4())
         lithium, stimulant = str(uuid.uuid4()), str(uuid.uuid4())

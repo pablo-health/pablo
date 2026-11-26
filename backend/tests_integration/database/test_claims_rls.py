@@ -47,7 +47,7 @@ _TABLES = ("claims", "claim_lines")
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -91,12 +91,12 @@ def patient_id(engine: Engine, tenant_schema: str) -> str:
 
 def _session(engine: Engine, tenant_schema: str, user_id: str) -> tuple[Any, Any, Any]:
     """A tenant session armed as ``user_id``, plus the tokens to release it."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(user_id)
@@ -107,7 +107,7 @@ def _session(engine: Engine, tenant_schema: str, user_id: str) -> tuple[Any, Any
 
 
 def _release(session: Any, schema_token: Any, uid_token: Any) -> None:
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)
@@ -115,7 +115,7 @@ def _release(session: Any, schema_token: Any, uid_token: Any) -> None:
 
 
 def _claim(patient_id: str, coverage_id: str, payer_id: str) -> Any:
-    from tests.claims_fixtures import claim, line  # noqa: PLC0415
+    from tests.claims_fixtures import claim, line
 
     claim_id = str(uuid.uuid4())
     now = datetime.now(UTC)
@@ -143,12 +143,12 @@ def _claim(patient_id: str, coverage_id: str, payer_id: str) -> Any:
 @pytest.fixture(scope="module")
 def coverage_ids(engine: Engine, tenant_schema: str, patient_id: str) -> tuple[str, str]:
     """A payer and an active coverage for the client, as clinician A. (coverage_id, payer_id)"""
-    from app.models.coverage import PatientCoverage  # noqa: PLC0415
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+    from app.models.coverage import PatientCoverage
+    from app.repositories.postgres.coverage import (
         PostgresPatientCoverageRepository,
         PostgresPayerRepository,
     )
-    from app.services.coverage_intake import new_payer  # noqa: PLC0415
+    from app.services.coverage_intake import new_payer
 
     session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
     try:
@@ -228,7 +228,7 @@ class TestGranteeCanReadAndWrite:
     def test_create_then_read_back_with_lines(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
+        from app.repositories.postgres.claims import PostgresClaimRepository
 
         coverage_id, payer_id = coverage_ids
         session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
@@ -253,8 +253,8 @@ class TestGranteeCanReadAndWrite:
     def test_update_writes_state_and_line_amounts(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from app.claims.transitions import advance  # noqa: PLC0415
-        from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
+        from app.claims.transitions import advance
+        from app.repositories.postgres.claims import PostgresClaimRepository
 
         coverage_id, payer_id = coverage_ids
         session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
@@ -279,8 +279,8 @@ class TestGranteeCanReadAndWrite:
     def test_duplicate_control_number_is_refused(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from app.repositories.postgres.claims import PostgresClaimRepository
+        from sqlalchemy.exc import IntegrityError
 
         coverage_id, payer_id = coverage_ids
         session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
@@ -302,7 +302,7 @@ class TestNonGranteeIsIsolated:
     def test_clinician_b_reads_no_claim(
         self, engine: Engine, tenant_schema: str, patient_id: str
     ) -> None:
-        from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
+        from app.repositories.postgres.claims import PostgresClaimRepository
 
         # Control: A sees at least one claim from the tests above.
         session_a, s_a, u_a = _session(engine, tenant_schema, _CLINICIAN_A)
@@ -345,7 +345,7 @@ class TestNonGranteeIsIsolated:
     def test_clinician_b_insert_rejected_by_rls(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+        from sqlalchemy.exc import ProgrammingError
 
         coverage_id, payer_id = coverage_ids
         with engine.connect() as conn:
@@ -444,7 +444,7 @@ class TestClaimReminders:
         Dedupe used to be a prefix match on free text, so two writers could
         both find nothing and both insert. Here the second one cannot.
         """
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         coverage_id, payer_id = coverage_ids
         session, s_tok, u_tok = _session(engine, tenant_schema, _CLINICIAN_A)
@@ -527,7 +527,7 @@ class TestClaimReminders:
 
 def _insert_claim(session: Any, patient_id: str, coverage_id: str, payer_id: str) -> Any:
     """A claim row, straight onto the session, for a reminder to hang off."""
-    from app.db.models import ClaimRow  # noqa: PLC0415
+    from app.db.models import ClaimRow
 
     built = _claim(patient_id, coverage_id, payer_id)
     now = datetime.now(UTC)
@@ -551,7 +551,7 @@ def _insert_claim(session: Any, patient_id: str, coverage_id: str, payer_id: str
 
 
 def _insert_reminder(session: Any, claim_row: Any, kind: str) -> Any:
-    from app.db.models import ClaimReminderRow  # noqa: PLC0415
+    from app.db.models import ClaimReminderRow
 
     now = datetime.now(UTC)
     row = ClaimReminderRow(

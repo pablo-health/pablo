@@ -45,7 +45,7 @@ class TestStrongAndWeakEvidence:
     def test_their_client_by_name_and_birthday_is_a_certain_hidden_match(
         self, engine: Engine, practice: dict[str, str]
     ) -> None:
-        from app.patients.matching import PatientHint  # noqa: PLC0415
+        from app.patients.matching import PatientHint
 
         result = _match(
             engine,
@@ -59,7 +59,7 @@ class TestStrongAndWeakEvidence:
     def test_their_client_by_initials_alone_is_no_match(
         self, engine: Engine, practice: dict[str, str]
     ) -> None:
-        from app.patients.matching import PatientHint  # noqa: PLC0415
+        from app.patients.matching import PatientHint
 
         result = _match(engine, practice["schema"], PatientHint(initials="G.H."))
 
@@ -69,7 +69,7 @@ class TestStrongAndWeakEvidence:
     def test_their_client_by_name_alone_is_no_match(
         self, engine: Engine, practice: dict[str, str]
     ) -> None:
-        from app.patients.matching import PatientHint  # noqa: PLC0415
+        from app.patients.matching import PatientHint
 
         result = _match(engine, practice["schema"], PatientHint(full_name="Grace Hopper"))
 
@@ -82,9 +82,9 @@ class TestMatchingAColleaguesClient:
     def test_an_import_of_their_client_says_who_sees_them_and_creates_nothing(
         self, engine: Engine, practice: dict[str, str]
     ) -> None:
-        from app.patients.matching import MatchContext  # noqa: PLC0415
-        from app.patients.seen_by import SeenBy  # noqa: PLC0415
-        from app.routes.calendar_import import _to_response  # noqa: PLC0415
+        from app.patients.matching import MatchContext
+        from app.patients.seen_by import SeenBy
+        from app.routes.calendar_import import _to_response
 
         before = _live_charts(engine, practice["schema"])
         conn, session = _tenant_session(engine, practice["schema"], _A)
@@ -106,13 +106,13 @@ class TestMatchingAColleaguesClient:
     def test_a_confirm_naming_their_chart_is_refused(
         self, engine: Engine, practice: dict[str, str]
     ) -> None:
-        from app.api_errors import BadRequestError  # noqa: PLC0415
-        from app.auth.service import TenantContext  # noqa: PLC0415
-        from app.models.scheduling import (  # noqa: PLC0415
+        from app.api_errors import BadRequestError
+        from app.auth.service import TenantContext
+        from app.models.scheduling import (
             ConfirmImportRequest,
             ConfirmImportSeries,
         )
-        from app.routes.calendar_import import confirm_calendar_import  # noqa: PLC0415
+        from app.routes.calendar_import import confirm_calendar_import
 
         before = _live_charts(engine, practice["schema"])
         scheduling = MagicMock()
@@ -156,7 +156,7 @@ class TestMatchingAColleaguesClient:
         assert _live_charts(engine, practice["schema"]) == before
 
     def test_my_own_client_still_matches(self, engine: Engine, practice: dict[str, str]) -> None:
-        from app.patients.matching import MatchContext, PatientHint, match_patient  # noqa: PLC0415
+        from app.patients.matching import MatchContext, PatientHint, match_patient
 
         conn, session = _tenant_session(engine, practice["schema"], _A)
         try:
@@ -173,7 +173,7 @@ class TestMatchingAColleaguesClient:
     def test_an_email_two_charts_share_is_possible_not_certain(
         self, engine: Engine, practice: dict[str, str]
     ) -> None:
-        from app.patients.matching import MatchContext, PatientHint, match_patient  # noqa: PLC0415
+        from app.patients.matching import MatchContext, PatientHint, match_patient
 
         conn, session = _tenant_session(engine, practice["schema"], _A)
         try:

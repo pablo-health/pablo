@@ -409,7 +409,7 @@ class TestTheFormWithholdsStaffColumns:
     def test_item_keys_are_the_keys_the_scorer_accepts(
         self, client: TestClient, index: int, code: str, count: int
     ) -> None:
-        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY  # noqa: PLC0415
+        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY
 
         instrument = client.get(FORM, headers=_auth(_TOKEN_A)).json()["instruments"][index]
         assert instrument["code"] == code
@@ -791,8 +791,8 @@ class TestRateLimit:
 
 def test_the_router_is_mounted_unconditionally() -> None:
     """No flag: with no resolver registered every URL answers 401 anyway."""
-    from app.main import app as real_app  # noqa: PLC0415
-    from app.route_introspection import iter_api_routes  # noqa: PLC0415
+    from app.main import app as real_app
+    from app.route_introspection import iter_api_routes
 
     mounted = {
         (path, method) for path, route in iter_api_routes(real_app) for method in route.methods

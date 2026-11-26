@@ -90,9 +90,9 @@ def seed_user(engine: Engine) -> Iterator[dict[str, str]]:
     repository before minting, so the link must exist for the assertion to mint
     a token.
     """
-    from app.db.platform_models import PlatformUserRow, UserIdentityRow  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PlatformUserRow, UserIdentityRow
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     user_id = str(uuid.uuid4())
     firebase_uid = f"fb-{uuid.uuid4().hex[:24]}"
@@ -149,7 +149,7 @@ def _signed_in_as(user: Any) -> Callable[[], Any]:
     """Stand in for ``get_current_user_no_mfa``: the user, armed for row security as it would be."""
 
     def _resolve() -> Any:
-        from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
+        from app.db import arm_current_user_id, get_db_session
 
         arm_current_user_id(get_db_session(), user.id)
         return user
@@ -176,13 +176,13 @@ def harness(
     are exposed so a test can assert ``pablo_amr`` is stamped only after a
     verified assertion.
     """
-    from app.auth.service import get_current_user_no_mfa  # noqa: PLC0415
-    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, middleware  # noqa: PLC0415
-    from app.models.user import User  # noqa: PLC0415
-    from app.rate_limit import require_rate_limit  # noqa: PLC0415
-    from app.services import passkey_tokens as tokens  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.auth.service import get_current_user_no_mfa
+    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, middleware
+    from app.models.user import User
+    from app.rate_limit import require_rate_limit
+    from app.services import passkey_tokens as tokens
+    from app.utcnow import utc_now
+    from fastapi.testclient import TestClient
 
     user = User(
         id=seed_user["user_id"],
@@ -342,7 +342,7 @@ class TestAuthentication:
 
         resp = _authenticate(harness.client, authenticator)
         assert resp.status_code == 200, resp.text
-        assert resp.json()["custom_token"] == "custom-token-stub"  # noqa: S105 — stub mint, not a secret
+        assert resp.json()["custom_token"] == "custom-token-stub"
 
         # The factor claim is stamped only here, after a verified assertion,
         # and against the user's resolved Firebase uid (the H1 guard).
@@ -371,7 +371,7 @@ class TestAuthentication:
         ``FirebaseVerifier`` production uses → ``require_mfa`` passes; a
         first-factor-only token does not.
         """
-        from app.auth.providers import FirebaseVerifier  # noqa: PLC0415
+        from app.auth.providers import FirebaseVerifier
 
         authenticator = SoftWebAuthnAuthenticator()
         _register(harness.client, authenticator)
@@ -401,7 +401,7 @@ class TestAuthentication:
         assert replay.status_code == 400, replay.text
 
     def test_unknown_challenge_rejected(self, harness: SimpleNamespace) -> None:
-        from webauthn.helpers import bytes_to_base64url  # noqa: PLC0415
+        from webauthn.helpers import bytes_to_base64url
 
         authenticator = SoftWebAuthnAuthenticator()
         _register(harness.client, authenticator)
@@ -493,7 +493,7 @@ class TestRecoveryCodeRedeem:
 
         resp = harness.client.post(_REDEEM, json={"code": code})
         assert resp.status_code == 200, resp.text
-        assert resp.json()["custom_token"] == "custom-token-stub"  # noqa: S105 — stub mint
+        assert resp.json()["custom_token"] == "custom-token-stub"
 
         # The recovery factor is stamped for THIS user, and only the recovery
         # AMR — no passkey provenance (a code is not a device-bound authenticator).
@@ -509,7 +509,7 @@ class TestRecoveryCodeRedeem:
         Closes the loop: real redemption → minted ``pablo_amr: ["recovery"]`` →
         the same ``FirebaseVerifier`` production uses → ``require_mfa`` passes.
         """
-        from app.auth.providers import FirebaseVerifier  # noqa: PLC0415
+        from app.auth.providers import FirebaseVerifier
 
         code = _register(harness.client, SoftWebAuthnAuthenticator())["backup_codes"][0]
         assert harness.client.post(_REDEEM, json={"code": code}).status_code == 200
@@ -556,9 +556,9 @@ class TestRecoveryCodeRedeem:
         # Re-point the (still first-factor) session at a DIFFERENT user B and try
         # A's code. ``redeem`` is scoped to the caller's user_id, so B can't spend
         # A's code — even though it's a perfectly valid code for A.
-        from app.auth.service import get_current_user_no_mfa  # noqa: PLC0415
-        from app.models.user import User  # noqa: PLC0415
-        from app.utcnow import utc_now  # noqa: PLC0415
+        from app.auth.service import get_current_user_no_mfa
+        from app.models.user import User
+        from app.utcnow import utc_now
 
         other = User(
             id=str(uuid.uuid4()), email="other@example.com", name="B", created_at=utc_now()
@@ -578,9 +578,9 @@ class TestRecoveryCodeRedeem:
         ``HTTPBearer`` guard rejects before any code is read — a code is always a
         SECOND factor, never a standalone login.
         """
-        from app.auth.service import get_current_user_no_mfa  # noqa: PLC0415
-        from app.rate_limit import require_rate_limit  # noqa: PLC0415
-        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from app.auth.service import get_current_user_no_mfa
+        from app.rate_limit import require_rate_limit
+        from fastapi.testclient import TestClient
 
         # Ensure auth is the REAL dependency (no leftover override), and keep the
         # IP limiter out of the way so we isolate the auth gate.

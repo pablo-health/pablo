@@ -126,7 +126,7 @@ def _intruder(portal: _Portal, arrangement: str) -> str:
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -148,9 +148,9 @@ def _portal_settings() -> Iterator[None]:
     Module-scoped, not per test: the session tokens minted at sign-in are
     verified against the signing key on every later request.
     """
-    from app.portal import factory  # noqa: PLC0415
-    from app.rate_limit import reset_portal_limiters  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.portal import factory
+    from app.rate_limit import reset_portal_limiters
+    from app.settings import get_settings
 
     with pytest.MonkeyPatch.context() as mp:
         factory.reset_delivery_registrations()
@@ -177,14 +177,14 @@ def _at(hour: int) -> datetime:
 
 def _seed_practice(engine: Engine) -> tuple[str, str, str]:
     """The practice, both clinicians, three clients and Avery's diary."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticePortalSettingsRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     # The row policies call ``has_patient_access`` unqualified; see
     # ``test_patients_api_e2e.tenant_schema`` for why the pool is warmed.
@@ -260,21 +260,21 @@ def _seed_diary(engine: Engine) -> None:
     The booking routes run on a session armed as the client's own clinician,
     Avery for Pat, so the reschedule control needs an hour Avery offers.
     """
-    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-    from app.models.user import UserPreferences  # noqa: PLC0415
-    from app.repositories.postgres.availability_rule import (  # noqa: PLC0415
+    from app.db import arm_current_user_id, set_tenant_schema
+    from app.models.user import UserPreferences
+    from app.repositories.postgres.availability_rule import (
         PostgresAvailabilityRuleRepository,
     )
-    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
-    from app.scheduling_engine.models.availability import (  # noqa: PLC0415
+    from app.repositories.postgres.user import PostgresUserRepository
+    from app.scheduling_engine.models.availability import (
         AvailabilityRule,
         EnforcementLevel,
         RuleType,
     )
-    from app.scheduling_engine.services.scheduling_policy import (  # noqa: PLC0415
+    from app.scheduling_engine.services.scheduling_policy import (
         update_policy,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(bind=engine) as s:
         PostgresUserRepository(s).save_preferences(_AVERY, UserPreferences(timezone=_TZ_NAME))
@@ -344,14 +344,14 @@ def _sign_in(client: TestClient, patient_id: str) -> str:
     code comes back through the shipped console gateway and the redemption
     goes over HTTP, so the session is a real, stepped-up one.
     """
-    from app.db import create_standalone_session  # noqa: PLC0415
-    from app.portal.db_store import DbPortalAuthStore, DbPortalSessionStore  # noqa: PLC0415
-    from app.portal.factory import (  # noqa: PLC0415
+    from app.db import create_standalone_session
+    from app.portal.db_store import DbPortalAuthStore, DbPortalSessionStore
+    from app.portal.factory import (
         build_portal_auth_service,
         sms_gateway_from_settings,
     )
-    from app.portal.practice_routes import ensure_practice_slug  # noqa: PLC0415
-    from app.rate_limit import reset_portal_limiters  # noqa: PLC0415
+    from app.portal.practice_routes import ensure_practice_slug
+    from app.rate_limit import reset_portal_limiters
 
     reset_portal_limiters()
     ensure_practice_slug(_PRACTICE_ID)
@@ -395,7 +395,7 @@ def _portal_chat_mounted(fastapi_app: FastAPI) -> Iterator[None]:
     app came up without them, and taken off again afterwards so no later
     module sees a route its deployment would not have.
     """
-    from app.routes import patient_chat  # noqa: PLC0415
+    from app.routes import patient_chat
 
     routes = fastapi_app.router.routes
     if any(getattr(r, "path", "").startswith(patient_chat.router.prefix) for r in routes):
@@ -452,7 +452,7 @@ def _memory_storage() -> Any:
     storage is asked anything. It exists so a control can mint a download URL
     and finish an upload.
     """
-    from app.services.file_storage import FileStorageProvider, UploadTarget  # noqa: PLC0415
+    from app.services.file_storage import FileStorageProvider, UploadTarget
 
     class _MemoryStorage(FileStorageProvider):
         def make_upload_target(self, **_kw: Any) -> UploadTarget:
@@ -484,7 +484,7 @@ def _memory_storage() -> Any:
 
 @pytest.fixture
 def fake_gateway() -> FakeChatLLMGateway:
-    from app.services.chat_llm_gateway import (  # noqa: PLC0415
+    from app.services.chat_llm_gateway import (
         FakeChatLLMGateway,
         StreamEvent,
     )
@@ -501,22 +501,22 @@ def fake_gateway() -> FakeChatLLMGateway:
 def client(
     fastapi_app: FastAPI, portal: _Portal, fake_gateway: FakeChatLLMGateway
 ) -> Iterator[TestClient]:
-    from app.auth.patient_context import get_patient_context  # noqa: PLC0415
-    from app.rate_limit import (  # noqa: PLC0415
+    from app.auth.patient_context import get_patient_context
+    from app.rate_limit import (
         get_chat_send_limiter,
         get_patient_document_init_limiter,
         get_patient_message_send_limiter,
     )
-    from app.repositories import get_patient_document_repository  # noqa: PLC0415
-    from app.routes.chat import get_chat_llm_gateway  # noqa: PLC0415
-    from app.routes.patient_documents import (  # noqa: PLC0415
+    from app.repositories import get_patient_document_repository
+    from app.routes.chat import get_chat_llm_gateway
+    from app.routes.patient_documents import (
         get_patient_documents_service_for_patient,
     )
-    from app.services.patient_documents_service import (  # noqa: PLC0415
+    from app.services.patient_documents_service import (
         PatientDocumentsService,
     )
-    from app.settings import get_settings  # noqa: PLC0415
-    from fastapi import Depends  # noqa: PLC0415
+    from app.settings import get_settings
+    from fastapi import Depends
 
     storage = _memory_storage()
     settings = get_settings().model_copy(update={"patient_documents_gcs_bucket": _BUCKET})
@@ -656,12 +656,12 @@ def _clear_appointments(engine: Engine) -> None:
 def _seed_appointment(engine: Engine, patient_id: str, start: datetime) -> str:
     """An appointment booked clinician-side on Avery's diary, as the booking
     suite seeds them: through the real ``SchedulingService``."""
-    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+    from app.db import arm_current_user_id, set_tenant_schema
+    from app.repositories.postgres.appointment import (
         PostgresAppointmentRepository,
     )
-    from app.scheduling_engine.services.scheduling import SchedulingService  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.scheduling_engine.services.scheduling import SchedulingService
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(bind=engine) as s:
         set_tenant_schema(s, _SCHEMA)
@@ -893,7 +893,7 @@ def _call(
 
 @pytest.mark.parametrize("arrangement", _INTRUDERS)
 @pytest.mark.parametrize("route", _OBJECT_ROUTES, ids=lambda r: r.name)
-def test_another_client_cannot_reach_pats_object(  # noqa: PLR0913 — fixtures
+def test_another_client_cannot_reach_pats_object(
     route: _ObjectRoute,
     arrangement: str,
     client: TestClient,
@@ -1007,7 +1007,7 @@ _ATTACH_ROUTES = ("send_message", "start_thread")
 @pytest.mark.parametrize("arrangement", _INTRUDERS)
 @pytest.mark.parametrize("via", _ATTACH_ROUTES)
 @pytest.mark.parametrize("sent", [False, True], ids=["unsent", "already_sent"])
-def test_another_client_cannot_attach_pats_document(  # noqa: PLR0913 — fixtures
+def test_another_client_cannot_attach_pats_document(
     via: str,
     sent: bool,
     arrangement: str,

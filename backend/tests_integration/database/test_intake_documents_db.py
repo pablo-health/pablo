@@ -66,8 +66,8 @@ def two_practices() -> Iterator[tuple[Engine, str, str]]:
     Two rather than one because the isolation claim here is about the
     schema, and one schema cannot demonstrate a boundary.
     """
-    from app.db.platform_bootstrap import bring_platform_to_head  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.platform_bootstrap import bring_platform_to_head
+    from app.db.provisioning import create_practice_schema
 
     scratch = scratch_db.scratch_name("pablo_documents")
     admin = create_engine(_DB_URL, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
@@ -90,11 +90,11 @@ def two_practices() -> Iterator[tuple[Engine, str, str]]:
 
 def _service_on(engine: Engine, schema: str):
     """A session pointed at one practice schema, and a service on it."""
-    from app.repositories.postgres.intake_document import (  # noqa: PLC0415
+    from app.repositories.postgres.intake_document import (
         PostgresIntakeDocumentRepository,
     )
-    from app.services.intake_document_service import IntakeDocumentService  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.services.intake_document_service import IntakeDocumentService
+    from sqlalchemy.orm import Session
 
     session = Session(engine)
     session.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -146,7 +146,7 @@ class TestTheDatabaseEnforcesOneDraft:
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
         """Two screens, one instant: the index is the only thing that arbitrates."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         engine, schema, _ = two_practices
         author = str(uuid.uuid4())
@@ -241,7 +241,7 @@ class TestVersionsAgainstRealStorage:
 
     def test_the_digest_survives_a_round_trip(self, two_practices: tuple[Engine, str, str]) -> None:
         """Stored and read back, it is still the digest of the stored words."""
-        from app.intake.documents import content_digest  # noqa: PLC0415
+        from app.intake.documents import content_digest
 
         engine, first, _ = two_practices
         session, service = _service_on(engine, first)

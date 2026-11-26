@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 
 def build_planner_practice(engine: Engine, schema: str) -> None:
     """Create ``schema`` from the template's schema half and give it the planner's policies."""
-    from app.db.practice_directory import apply_practice_directory_access  # noqa: PLC0415
-    from app.db.provisioning import (  # noqa: PLC0415
+    from app.db.practice_directory import apply_practice_directory_access
+    from app.db.provisioning import (
         _apply_tenant_template,
         _stamp_alembic_at_head,
     )
@@ -39,7 +39,7 @@ def build_planner_practice(engine: Engine, schema: str) -> None:
 
 def run_planner(engine: Engine, schema: str, *, strict: bool = True) -> RlsReconcileCounts:
     """``infer_rls_on_schema`` over ``schema`` on its own session, as the regen runs it."""
-    from app.db import PLATFORM_SCHEMA, infer_rls_on_schema  # noqa: PLC0415
+    from app.db import PLATFORM_SCHEMA, infer_rls_on_schema
 
     with Session(engine) as session:
         session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))

@@ -41,7 +41,7 @@ def _calendar_key() -> Iterator[None]:
     One key for the module: ``remembered_as_theirs`` stores a digest once,
     and every test after it has to read that digest back under the same key.
     """
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
@@ -79,9 +79,9 @@ def throwaway_role(engine: Engine) -> Iterator[str]:
 @pytest.fixture(scope="module")
 def remembered_as_theirs(engine: Engine, practice: dict[str, str]) -> None:
     """A answered the "rec-1" series as B's client: the strong evidence a block rests on."""
-    from app.calendar_providers.source_identity import GOOGLE_CALENDAR_SOURCE  # noqa: PLC0415
-    from app.patients.identifiers import identifier_digest  # noqa: PLC0415
-    from app.repositories.patient_source_mapping import PatientSourceMapping  # noqa: PLC0415
+    from app.calendar_providers.source_identity import GOOGLE_CALENDAR_SOURCE
+    from app.patients.identifiers import identifier_digest
+    from app.repositories.patient_source_mapping import PatientSourceMapping
 
     conn, session = _tenant_session(engine, practice["schema"], _A)
     try:

@@ -74,7 +74,7 @@ def test_a_filed_claim_can_be_found_again_and_pays(live: LiveClient) -> None:
     downstream — acknowledgements, payments, the client's balance — hangs off
     that being true.
     """
-    from app.models.claims_transport import ClaimSubmissionRequest  # noqa: PLC0415
+    from app.models.claims_transport import ClaimSubmissionRequest
 
     control_number = fresh_control_number()
     request = ClaimSubmissionRequest.model_validate(submission_body(control_number))
@@ -137,9 +137,9 @@ def test_the_payer_says_what_it_did_with_each_service(live: LiveClient) -> None:
     split is exercised in the unit suite against constructed remittances and
     waits on a real payer.
     """
-    from app.claims.remittance_feed import FeedRemittanceDetails  # noqa: PLC0415
-    from app.claims.remittance_lines import postings_for  # noqa: PLC0415
-    from app.models.claims_transport import ClaimSubmissionRequest  # noqa: PLC0415
+    from app.claims.remittance_feed import FeedRemittanceDetails
+    from app.claims.remittance_lines import postings_for
+    from app.models.claims_transport import ClaimSubmissionRequest
 
     control_number = fresh_control_number()
     request = ClaimSubmissionRequest.model_validate(submission_body(control_number))
@@ -198,7 +198,7 @@ def test_the_same_key_files_one_claim_not_two(live: LiveClient) -> None:
     twice and the practice would be paid twice for work done once — the kind
     of error that is found by an audit, not by a test.
     """
-    from app.models.claims_transport import ClaimSubmissionRequest  # noqa: PLC0415
+    from app.models.claims_transport import ClaimSubmissionRequest
 
     request = ClaimSubmissionRequest.model_validate(submission_body(fresh_control_number()))
     key = fresh_idempotency_key()

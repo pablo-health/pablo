@@ -70,7 +70,7 @@ _PARENT_REVISION = "c5e1a9f0d248"
 
 
 def _new_schema(engine: Engine, label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -730,7 +730,7 @@ def _rebuild_through_the_chain(engine: Engine, schema: str) -> None:
     constraint as nothing to do, which is what a fan-out over a schema that
     has seen the revision before actually meets.
     """
-    from app.db.migrate_tenants import upgrade_tenant_schema  # noqa: PLC0415
+    from app.db.migrate_tenants import upgrade_tenant_schema
 
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -750,7 +750,7 @@ def _reapply_policies(engine: Engine, schema: str) -> None:
     The chain creates the tables; their policies come from the tenant
     templates, applied by ``reconcile_tenant_rls`` once the chain is done.
     """
-    from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
+    from app.db.migrate_tenants import reconcile_tenant_rls
 
     reconcile_tenant_rls(engine, schema)
 

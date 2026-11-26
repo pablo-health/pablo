@@ -53,7 +53,7 @@ class _KilledError(RuntimeError):
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -99,12 +99,12 @@ class _TenantSession:
     """A tenant session armed as one clinician, the way a worker opens one."""
 
     def __init__(self, engine: Engine, schema: str, user_id: str) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_tenant_schema,
             _current_user_id,
             arm_current_user_id,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         self._schema_token = _current_tenant_schema.set(schema)
         self._uid_token = _current_user_id.set(user_id)
@@ -113,7 +113,7 @@ class _TenantSession:
         arm_current_user_id(self.session, user_id)
 
     def close(self) -> None:
-        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id
 
         self.session.close()
         _current_tenant_schema.reset(self._schema_token)
@@ -123,12 +123,12 @@ class _TenantSession:
 @pytest.fixture(scope="module")
 def coverage_ids(engine: Engine, tenant_schema: str, patient_id: str) -> tuple[str, str]:
     """A payer and an active coverage for the client, as clinician A. (coverage_id, payer_id)"""
-    from app.models.coverage import PatientCoverage  # noqa: PLC0415
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+    from app.models.coverage import PatientCoverage
+    from app.repositories.postgres.coverage import (
         PostgresPatientCoverageRepository,
         PostgresPayerRepository,
     )
-    from app.services.coverage_intake import new_payer  # noqa: PLC0415
+    from app.services.coverage_intake import new_payer
 
     scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
     try:
@@ -153,11 +153,11 @@ def coverage_ids(engine: Engine, tenant_schema: str, patient_id: str) -> tuple[s
 
 
 def _pipeline(scoped: _TenantSession, user_id: str) -> Any:
-    from app.claims.receipts import ClaimPipeline  # noqa: PLC0415
-    from app.repositories.postgres.claim_receipts import (  # noqa: PLC0415
+    from app.claims.receipts import ClaimPipeline
+    from app.repositories.postgres.claim_receipts import (
         PostgresClaimReceiptRepository,
     )
-    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
+    from app.repositories.postgres.claims import PostgresClaimRepository
 
     return ClaimPipeline(
         claims=PostgresClaimRepository(scoped.session),
@@ -171,9 +171,9 @@ def _validated_claim(
     scoped: _TenantSession, patient_id: str, coverage_ids: tuple[str, str], **overrides: Any
 ) -> Any:
     """A validated claim owned by clinician A, committed."""
-    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
-    from tests.claims_fixtures import billing_snapshot, claim, line  # noqa: PLC0415
-    from tests.claims_pipeline_fakes import fresh_control_number  # noqa: PLC0415
+    from app.repositories.postgres.claims import PostgresClaimRepository
+    from tests.claims_fixtures import billing_snapshot, claim, line
+    from tests.claims_pipeline_fakes import fresh_control_number
 
     coverage_id, payer_id = coverage_ids
     claim_id = str(uuid.uuid4())
@@ -206,9 +206,9 @@ def _validated_claim(
 
 
 def _submit(scoped: _TenantSession, client: Any) -> Any:
-    from app.claims.submit_worker import submit_pending  # noqa: PLC0415
-    from app.repositories.postgres.coverage import PostgresPayerRepository  # noqa: PLC0415
-    from tests.claims_pipeline_fakes import ACCOUNT  # noqa: PLC0415
+    from app.claims.submit_worker import submit_pending
+    from app.repositories.postgres.coverage import PostgresPayerRepository
+    from tests.claims_pipeline_fakes import ACCOUNT
 
     return submit_pending(
         _pipeline(scoped, _CLINICIAN_A),
@@ -228,8 +228,8 @@ def _reminders_visible_to(engine: Engine, schema: str, user_id: str) -> list[Any
     else's" below now means "nobody without a grant on the client", which is
     the same boundary the claim itself has.
     """
-    from app.db.models import ClaimReminderRow  # noqa: PLC0415
-    from sqlalchemy import select  # noqa: PLC0415
+    from app.db.models import ClaimReminderRow
+    from sqlalchemy import select
 
     scoped = _TenantSession(engine, schema, user_id)
     try:
@@ -304,7 +304,7 @@ class TestOutboxOnPostgres:
     def test_a_rejection_lands_as_the_owners_reminder_and_nobody_elses(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from tests.claims_pipeline_fakes import (  # noqa: PLC0415
+        from tests.claims_pipeline_fakes import (
             FakeClearinghouse,
             submission_edit_rejected,
         )
@@ -346,10 +346,10 @@ class TestOutboxOnPostgres:
     def test_clinician_b_sees_no_receipt(
         self, engine: Engine, tenant_schema: str, patient_id: str
     ) -> None:
-        from app.repositories.postgres.claim_receipts import (  # noqa: PLC0415
+        from app.repositories.postgres.claim_receipts import (
             PostgresClaimReceiptRepository,
         )
-        from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
+        from app.repositories.postgres.claims import PostgresClaimRepository
 
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -374,7 +374,7 @@ class TestOutboxOnPostgres:
     def test_a_crash_after_the_call_is_replayed_with_the_committed_key(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+        from tests.claims_pipeline_fakes import FakeClearinghouse
 
         client = FakeClearinghouse()
         client.answers.append(_KilledError("SIGKILL"))
@@ -416,10 +416,10 @@ class TestAcknowledgementsOnPostgres:
     def test_a_redelivered_event_moves_nothing_and_the_database_refuses_a_second_row(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from app.claims.acknowledgments import apply_fetched, fetch_acknowledgment  # noqa: PLC0415
-        from app.models.claims import ClaimReceipt  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
-        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+        from app.claims.acknowledgments import apply_fetched, fetch_acknowledgment
+        from app.models.claims import ClaimReceipt
+        from sqlalchemy.exc import IntegrityError
+        from tests.claims_pipeline_fakes import FakeClearinghouse
 
         client = FakeClearinghouse()
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -466,11 +466,11 @@ class TestAcknowledgementsOnPostgres:
     def test_a_deadline_rung_fires_once_and_the_database_refuses_a_second(
         self, engine: Engine, tenant_schema: str, patient_id: str, coverage_ids: tuple[str, str]
     ) -> None:
-        from app.claims.watchdog import run_watchdog  # noqa: PLC0415
-        from app.models.claims import ClaimReceipt  # noqa: PLC0415
-        from app.repositories.postgres.coverage import PostgresPayerRepository  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
-        from tests.claims_fixtures import line  # noqa: PLC0415
+        from app.claims.watchdog import run_watchdog
+        from app.models.claims import ClaimReceipt
+        from app.repositories.postgres.coverage import PostgresPayerRepository
+        from sqlalchemy.exc import IntegrityError
+        from tests.claims_fixtures import line
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -599,12 +599,12 @@ class TestWebhookRoutingOnPostgres:
         fixture — the models own those defaults, and a test that restates
         them goes stale silently.
         """
-        from app.db.platform_models import (  # noqa: PLC0415
+        from app.db.platform_models import (
             EmailTenantMappingRow,
             PlatformUserRow,
             PracticeRow,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         practice_id = f"prac-{uuid.uuid4().hex[:8]}"
         now = datetime.now(UTC)
@@ -677,10 +677,10 @@ class TestWebhookRoutingOnPostgres:
         clinician A under the row policy, and nothing here tells the fan-out
         that. It has to find A through the registry and the email map.
         """
-        from app.claims import fanout  # noqa: PLC0415
-        from app.claims.routing import record_claim_route  # noqa: PLC0415
-        from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
-        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+        from app.claims import fanout
+        from app.claims.routing import record_claim_route
+        from app.claims.webhooks import WebhookEvent
+        from tests.claims_pipeline_fakes import FakeClearinghouse
 
         client = FakeClearinghouse()
         created = tenant.claim(
@@ -716,10 +716,10 @@ class TestWebhookRoutingOnPostgres:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """An 835 reaches ``paid`` through the same fan-out, not only in a fake."""
-        from app.claims import fanout  # noqa: PLC0415
-        from app.claims.routing import record_claim_route  # noqa: PLC0415
-        from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
-        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+        from app.claims import fanout
+        from app.claims.routing import record_claim_route
+        from app.claims.webhooks import WebhookEvent
+        from tests.claims_pipeline_fakes import FakeClearinghouse
 
         client = FakeClearinghouse()
         created = tenant.claim(
@@ -762,9 +762,9 @@ class TestWebhookRoutingOnPostgres:
         a real incident stayed invisible. With routing it has one meaning: no
         row in ``platform.claim_routes``, so this deployment never filed it.
         """
-        from app.claims import fanout  # noqa: PLC0415
-        from app.claims.webhooks import WebhookEvent  # noqa: PLC0415
-        from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+        from app.claims import fanout
+        from app.claims.webhooks import WebhookEvent
+        from tests.claims_pipeline_fakes import FakeClearinghouse
 
         client = FakeClearinghouse()
         transaction = client.acknowledge("payer_accepted", "NOBODYSCLAIM01")
@@ -795,7 +795,7 @@ class TestWebhookRoutingOnPostgres:
         scan happened to reach first — which would have posted a payer's
         money into the wrong practice's ledger.
         """
-        from app.claims.routing import (  # noqa: PLC0415
+        from app.claims.routing import (
             record_claim_route,
             route_for_control_numbers,
         )
@@ -815,7 +815,7 @@ class TestWebhookRoutingOnPostgres:
 
     def test_the_index_says_nothing_about_a_control_number_it_never_saw(self) -> None:
         """No row is "not indexed", and the receiver reads that as ``unmatched``."""
-        from app.claims.routing import route_for_control_numbers  # noqa: PLC0415
+        from app.claims.routing import route_for_control_numbers
 
         assert route_for_control_numbers([f"NX{uuid.uuid4().hex[:8].upper()}"]) is None
         assert route_for_control_numbers([]) is None
@@ -827,7 +827,7 @@ class TestWebhookRoutingOnPostgres:
         incident through: with this function returning ``[]`` the whole unit
         suite still passes, and every delivery reports ``unmatched``.
         """
-        from app.claims.fanout import practice_user_ids  # noqa: PLC0415
+        from app.claims.fanout import practice_user_ids
 
         assert set(practice_user_ids(registered_practice)) == {_CLINICIAN_A, _CLINICIAN_B}
 
@@ -850,13 +850,13 @@ class TestWebhookRoutingOnPostgres:
         DOES map emails — that is the condition that separates "this practice
         has nobody" from "this deployment maps nobody".
         """
-        from app.claims.fanout import practice_user_ids  # noqa: PLC0415
-        from app.db.platform_models import (  # noqa: PLC0415
+        from app.claims.fanout import practice_user_ids
+        from app.db.platform_models import (
             EmailTenantMappingRow,
             PlatformUserRow,
             PracticeRow,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         # The precondition that gives this test its meaning: the deployment
         # demonstrably DOES map emails to practices, so an unresolvable roster
@@ -923,12 +923,12 @@ class TestWebhookRoutingOnPostgres:
         the behaviour under test is a query against an empty table and a stub
         session would only restate the belief being tested.
         """
-        from app.claims.fanout import practice_user_ids  # noqa: PLC0415
-        from app.db.platform_models import (  # noqa: PLC0415
+        from app.claims.fanout import practice_user_ids
+        from app.db.platform_models import (
             EmailTenantMappingRow,
             PlatformUserRow,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         with OrmSession(bind=engine) as session:
             saved = session.query(EmailTenantMappingRow).all()

@@ -67,7 +67,7 @@ def probe_schema() -> Iterator[None]:
 @pytest.fixture
 def short_timeout_sessions(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Request sessions whose connections carry a short idle-in-transaction timeout."""
-    from app.db import middleware  # noqa: PLC0415
+    from app.db import middleware
 
     engine = create_engine(
         _db_url,
@@ -89,7 +89,7 @@ def new_connection_sessions(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     first query often lands on one: an overflow connection, a recycle, a
     pre-ping reconnect.
     """
-    from app.db import middleware  # noqa: PLC0415
+    from app.db import middleware
 
     engine = create_engine(_db_url, poolclass=NullPool)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -109,8 +109,8 @@ def _app(
     The route records whether its session was inside a transaction on entry,
     then (after ``wait_seconds``) the schema its first query resolved to.
     """
-    from app.db import get_db_session  # noqa: PLC0415
-    from app.db.middleware import DatabaseSessionMiddleware  # noqa: PLC0415
+    from app.db import get_db_session
+    from app.db.middleware import DatabaseSessionMiddleware
 
     if arm is not None:
         monkeypatch.setattr(DatabaseSessionMiddleware, "_prepare", staticmethod(arm))
@@ -132,14 +132,14 @@ def _app(
 
 
 def _arm_practice(_request: object, session: Session) -> tuple[str, None]:
-    from app.db import set_tenant_schema  # noqa: PLC0415
+    from app.db import set_tenant_schema
 
     set_tenant_schema(session, _SCHEMA)
     return _SCHEMA, None
 
 
 def _arm_no_practice(_request: object, session: Session) -> tuple[None, str]:
-    from app.db import clear_tenant_schema  # noqa: PLC0415
+    from app.db import clear_tenant_schema
 
     clear_tenant_schema(session)
     return None, "no-practice-mapping-for-identity"
@@ -161,7 +161,7 @@ def test_unauthenticated_route_starts_outside_a_transaction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The real prelude, no credential: the default schema, as an internal route gets."""
-    from app.db import DEFAULT_PRACTICE_SCHEMA  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_SCHEMA
 
     application, seen = _app(monkeypatch, None)
     with TestClient(application) as client:
@@ -176,7 +176,7 @@ def test_unresolved_route_starts_outside_a_transaction_on_no_practice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No practice means exactly the platform schema and ``public``, on a new connection too."""
-    from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+    from app.db import PLATFORM_SCHEMA
 
     application, seen = _app(monkeypatch, _arm_no_practice)
     with TestClient(application) as client:

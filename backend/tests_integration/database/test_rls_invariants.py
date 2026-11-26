@@ -102,7 +102,7 @@ _EFFECTIVE_TABLES: frozenset[str] = frozenset(TENANT_SCOPED_TABLES) | rls_forced
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so the policy CREATEs that reference
     # ``has_patient_access`` (which lives in ``practice``) resolve.
@@ -425,7 +425,7 @@ class TestRlsGucRearmedAcrossCommit:
     """
 
     def test_guc_survives_mid_session_commit(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id
 
         seed_user = "a2bb584b-9a12-5fa0-ab07-6b8edf1aef38"
         patient_id = str(uuid.uuid4())
@@ -537,7 +537,7 @@ class TestRlsGucRearmedAcrossCommitOnSyncRoute:
     def test_guc_survives_mid_session_commit_without_contextvar(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _RLS_USER_ID_KEY,
             _current_tenant_schema,
             _current_user_id,
@@ -666,7 +666,7 @@ class TestArmCurrentUserIdEnablesProfileWrite:
         )
 
     def test_unarmed_profile_insert_is_rejected(self, engine: Engine, tenant_schema: str) -> None:
-        from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+        from sqlalchemy.exc import ProgrammingError
 
         with engine.connect() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
@@ -689,7 +689,7 @@ class TestArmCurrentUserIdEnablesProfileWrite:
     def test_arm_current_user_id_allows_profile_insert(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_tenant_schema,
             _current_user_id,
             arm_current_user_id,
@@ -781,7 +781,7 @@ class TestOverlayNotRowScopedRegistry:
         return row["relrowsecurity"], row["relforcerowsecurity"]
 
     def test_unregistered_id_only_table_raises(self, engine: Engine, bare_schema: str) -> None:
-        from app.db import infer_rls_on_schema  # noqa: PLC0415
+        from app.db import infer_rls_on_schema
 
         with OrmSession(bind=engine) as session, pytest.raises(RuntimeError) as exc:
             infer_rls_on_schema(session, bare_schema)
@@ -793,7 +793,7 @@ class TestOverlayNotRowScopedRegistry:
     def test_registered_table_is_treated_as_not_row_scoped(
         self, engine: Engine, bare_schema: str
     ) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _OVERLAY_NOT_ROW_SCOPED,
             infer_rls_on_schema,
             register_overlay_not_row_scoped,

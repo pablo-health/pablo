@@ -36,8 +36,8 @@ def _tenant_session(engine: Engine, schema: str, user_id: str) -> tuple[Connecti
 def _repos(
     session: Session,
 ) -> tuple[PostgresPatientRepository, PostgresPatientSourceMappingRepository]:
-    from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
-    from app.repositories.postgres.patient_source_mapping import (  # noqa: PLC0415
+    from app.repositories.postgres.patient import PostgresPatientRepository
+    from app.repositories.postgres.patient_source_mapping import (
         PostgresPatientSourceMappingRepository,
     )
 
@@ -53,7 +53,7 @@ def _calendar_service() -> MagicMock:
 
 
 def _users() -> MagicMock:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     users = MagicMock()
     users.get.side_effect = lambda uid: (
@@ -68,8 +68,8 @@ def _users() -> MagicMock:
 
 
 def _proposal(summary: str) -> ImportProposal:
-    from app.calendar_providers.practice_import import build_proposal  # noqa: PLC0415
-    from app.calendar_providers.provider import ImportCandidate  # noqa: PLC0415
+    from app.calendar_providers.practice_import import build_proposal
+    from app.calendar_providers.provider import ImportCandidate
 
     now = datetime.now(UTC)
     first = now - timedelta(days=21)
@@ -99,13 +99,13 @@ def _live_charts(engine: Engine, schema: str) -> set[str]:
 
 
 def _series_key() -> str:
-    from app.calendar_providers.source_identity import calendar_source_identifier  # noqa: PLC0415
+    from app.calendar_providers.source_identity import calendar_source_identifier
 
     return calendar_source_identifier("rec-1", "", 0, "00:00")
 
 
 def _match(engine: Engine, schema: str, hint: PatientHint) -> MatchResult:
-    from app.patients.matching import MatchContext, match_patient  # noqa: PLC0415
+    from app.patients.matching import MatchContext, match_patient
 
     conn, session = _tenant_session(engine, schema, _A)
     try:

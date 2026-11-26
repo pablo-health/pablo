@@ -65,7 +65,7 @@ class _Seed:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -138,8 +138,8 @@ def client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
     """The real route stack as the clinician, wired as the restricted-note route suite is."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -148,10 +148,10 @@ def client(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
-    from app.notes import get_default_registry, register_builtin_note_types  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.models import User
+    from app.notes import get_default_registry, register_builtin_note_types
+    from fastapi.testclient import TestClient
 
     register_builtin_note_types(get_default_registry())
     user = User(

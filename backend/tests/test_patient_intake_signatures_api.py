@@ -452,7 +452,7 @@ class TestWhoMaySign:
 
     def test_the_request_names_no_patient(self) -> None:
         """The structural guarantee: there is no field to put an id in."""
-        from app.models.patient_intake_signature_api import (  # noqa: PLC0415
+        from app.models.patient_intake_signature_api import (
             SignDocumentRequest,
         )
 

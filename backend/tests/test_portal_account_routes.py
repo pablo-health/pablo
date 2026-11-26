@@ -179,7 +179,7 @@ def app(
     # ``get_patient_context`` arms search_path and the patient GUC on a real
     # session. There is no database here, so the arming is stubbed out —
     # exactly as the patient chat route tests do it.
-    import sys  # noqa: PLC0415
+    import sys
 
     module = sys.modules[patient_context_name]
     monkeypatch.setattr(module, "get_db_session", object)
@@ -187,7 +187,7 @@ def app(
     monkeypatch.setattr(module, "arm_current_patient_id", lambda _s, _p: None)
 
     # The stores the handlers build from the request session.
-    from app.portal import account_routes  # noqa: PLC0415
+    from app.portal import account_routes
 
     monkeypatch.setattr(account_routes, "DbPortalSessionStore", lambda _session: sessions)
     # The header name comes out of the platform directory, which is a
@@ -338,7 +338,7 @@ class TestSigningOutIsNotWithdrawal:
         handlers are built with no challenge store at all, so touching one
         raises rather than quietly consuming an invitation.
         """
-        from app.portal import account_routes  # noqa: PLC0415
+        from app.portal import account_routes
 
         built: list[Any] = []
         real_builder = account_routes.build_portal_auth_service
@@ -390,7 +390,7 @@ class TestTheCapabilityDocument:
         practice keeps messaging and names refills, which the deployment is
         not configured for: messaging stays on, intake goes off, and refills
         stays off whatever the practice says."""
-        from app.portal import account_routes  # noqa: PLC0415
+        from app.portal import account_routes
 
         monkeypatch.setattr(
             account_routes,
@@ -500,7 +500,7 @@ class TestTheWelcome:
     def test_a_practice_with_no_address_yet_is_called_your_practice(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from app.portal import account_routes  # noqa: PLC0415
+        from app.portal import account_routes
 
         monkeypatch.setattr(account_routes, "practice_address_for_schema", lambda _schema: None)
 

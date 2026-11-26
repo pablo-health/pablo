@@ -41,7 +41,7 @@ _EDIT_REJECTED = "33"
 
 
 def _harness() -> Any:
-    from tests.claims_pipeline_fakes import make_harness, restore_listeners  # noqa: PLC0415
+    from tests.claims_pipeline_fakes import make_harness, restore_listeners
 
     built = make_harness(now=datetime.now(UTC))
     built.pipeline.now = lambda: datetime.now(UTC)

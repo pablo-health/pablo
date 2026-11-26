@@ -49,7 +49,7 @@ _NEW_YORK = ZoneInfo("America/New_York")
 
 
 def _provision(engine: Engine) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -62,7 +62,7 @@ def _provision(engine: Engine) -> str:
 def _register_practice(
     engine: Engine, schema: str, owner: str, *, days: int | None, reply_days: int = 2
 ) -> None:
-    from app.db.platform_models import PracticePortalSettingsRow, PracticeRow  # noqa: PLC0415
+    from app.db.platform_models import PracticePortalSettingsRow, PracticeRow
 
     practice_id = f"practice-turnaround-{uuid.uuid4().hex[:8]}"
     now = datetime.now(UTC)
@@ -123,7 +123,7 @@ class TestDueTimeFromThePractice:
     def test_counts_the_owners_working_days_and_the_practices_target(
         self, engine: Engine, schemas: list[str]
     ) -> None:
-        from app.services.refill_turnaround import practice_refill_due_at  # noqa: PLC0415
+        from app.services.refill_turnaround import practice_refill_due_at
 
         owner = str(uuid.uuid4())
         schema = _provision(engine)
@@ -141,7 +141,7 @@ class TestDueTimeFromThePractice:
     def test_an_owner_with_no_hours_counts_monday_to_friday(
         self, engine: Engine, schemas: list[str]
     ) -> None:
-        from app.services.refill_turnaround import practice_refill_due_at  # noqa: PLC0415
+        from app.services.refill_turnaround import practice_refill_due_at
 
         owner = str(uuid.uuid4())
         schema = _provision(engine)
@@ -159,7 +159,7 @@ class TestReplyByFromThePractice:
     def test_counts_the_owners_working_days_and_the_reply_target(
         self, engine: Engine, schemas: list[str]
     ) -> None:
-        from app.services.message_reply_target import practice_reply_due  # noqa: PLC0415
+        from app.services.message_reply_target import practice_reply_due
 
         owner = str(uuid.uuid4())
         schema = _provision(engine)
@@ -177,7 +177,7 @@ class TestReplyByFromThePractice:
     def test_a_practice_that_never_set_it_gets_two_working_days(
         self, engine: Engine, schemas: list[str]
     ) -> None:
-        from app.services.message_reply_target import practice_reply_due  # noqa: PLC0415
+        from app.services.message_reply_target import practice_reply_due
 
         owner = str(uuid.uuid4())
         schema = _provision(engine)
@@ -193,8 +193,8 @@ class TestQueueOrder:
     def test_soonest_due_first_and_no_due_time_last(
         self, engine: Engine, schemas: list[str]
     ) -> None:
-        from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
-        from app.repositories.postgres.refill_request import (  # noqa: PLC0415
+        from app.db.tenant_session import tenant_db_session
+        from app.repositories.postgres.refill_request import (
             PostgresRefillRequestRepository,
         )
 

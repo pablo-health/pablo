@@ -71,7 +71,7 @@ class _Seed:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -182,7 +182,7 @@ def seed(engine: Engine, tenant_schema: str) -> _Seed:
     return s
 
 
-def _insert_note(  # noqa: PLR0913 — one keyword per column the proof depends on
+def _insert_note(
     conn: Connection,
     *,
     note_id: str,
@@ -217,7 +217,7 @@ class _FixedNavigation:
     """Stands in for the LLM behind ``/api/ehr-navigate``; reads nothing."""
 
     async def navigate(self, _request: GoalNavigationRequest) -> GoalNavigationResponse:
-        from app.models.ehr_route import GoalNavigationResponse  # noqa: PLC0415
+        from app.models.ehr_route import GoalNavigationResponse
 
         return GoalNavigationResponse(
             action="click",
@@ -242,8 +242,8 @@ def client(
     ``app.current_user_id`` on the request session the way production does.
     The only other substitution is the LLM behind ``/api/ehr-navigate``.
     """
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -252,10 +252,10 @@ def client(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
-    from app.routes.ehr_routes import get_ehr_navigation_service  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.models import User
+    from app.routes.ehr_routes import get_ehr_navigation_service
+    from fastapi.testclient import TestClient
 
     user = User(
         id=_CLINICIAN,

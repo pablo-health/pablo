@@ -56,7 +56,7 @@ _USER_B = "user-b-7d2a4b"
 
 
 def _new_schema(engine: Engine) -> str:
-    from tests_integration.database.planner_practice import (  # noqa: PLC0415
+    from tests_integration.database.planner_practice import (
         build_planner_practice,
     )
 

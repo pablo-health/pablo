@@ -674,9 +674,9 @@ class TestALicensedMeasureOnAForm:
 
     @pytest.fixture
     def restricted_gad7(self, monkeypatch: pytest.MonkeyPatch) -> str:
-        from dataclasses import replace  # noqa: PLC0415
+        from dataclasses import replace
 
-        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY  # noqa: PLC0415
+        from app.outcome_measures.instruments import INSTRUMENT_REGISTRY
 
         monkeypatch.setitem(
             INSTRUMENT_REGISTRY,

@@ -118,7 +118,7 @@ class _Caller:
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -136,7 +136,7 @@ def _arming_here_stays_here() -> Iterator[None]:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -160,13 +160,13 @@ def _open_session(engine: Engine, schema: str, user_id: str) -> tuple[Session, t
     ``after_begin`` listener reads them, and a fixture runs before any
     per-test reset, so whatever an earlier module left armed must not leak in.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     tokens = (
         _current_tenant_schema.set(schema),
@@ -180,7 +180,7 @@ def _open_session(engine: Engine, schema: str, user_id: str) -> tuple[Session, t
 
 
 def _close_session(session: Session, tokens: tuple[Any, ...]) -> None:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -207,7 +207,7 @@ def seed(engine: Engine, tenant_schema: str) -> _Seed:
     return s
 
 
-def _seed_patient(  # noqa: PLR0913 — one row's columns
+def _seed_patient(
     engine: Engine, schema: str, clinician: str, patient: str, first: str, last: str
 ) -> None:
     with engine.begin() as conn:
@@ -256,8 +256,8 @@ def notes(engine: Engine, tenant_schema: str, seed: _Seed) -> _Notes:
     Written as Avery, through the note service and the real repository, so the
     signed versions and the addendum chain are the ones the routes write.
     """
-    from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
-    from app.services.note_service import NoteService  # noqa: PLC0415
+    from app.repositories.postgres.note import PostgresNotesRepository
+    from app.services.note_service import NoteService
 
     n = _Notes(*(str(uuid.uuid4()) for _ in range(4)))
     session, tokens = _open_session(engine, tenant_schema, _AVERY)
@@ -288,7 +288,7 @@ def notes(engine: Engine, tenant_schema: str, seed: _Seed) -> _Notes:
 
 
 def _user(user_id: str) -> User:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=user_id,
@@ -306,7 +306,7 @@ def caller() -> _Caller:
 
 
 @pytest.fixture
-def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
+def client(
     fastapi_app: FastAPI,
     engine: Engine,
     tenant_schema: str,
@@ -314,8 +314,8 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
     caller: _Caller,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -324,8 +324,8 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from fastapi.testclient import TestClient
 
     del seed
     _truncate_audit(engine, tenant_schema)
@@ -571,7 +571,7 @@ def _assert_control(route: _Route, resp: Response) -> None:
 
 
 @pytest.mark.parametrize("route", _ROUTES, ids=lambda r: r.name)
-def test_blake_cannot_reach_averys_note(  # noqa: PLR0913 — fixtures
+def test_blake_cannot_reach_averys_note(
     route: _Route,
     client: TestClient,
     caller: _Caller,

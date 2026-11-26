@@ -154,7 +154,7 @@ def app(
     application.dependency_overrides[get_patient_repository] = lambda: patients
     application.dependency_overrides[get_audit_service] = lambda: recording_audit
 
-    import sys  # noqa: PLC0415
+    import sys
 
     module = sys.modules[patient_context_name]
     monkeypatch.setattr(module, "get_db_session", object)

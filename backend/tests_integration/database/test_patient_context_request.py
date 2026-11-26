@@ -63,7 +63,7 @@ from app.db.middleware import DatabaseSessionMiddleware  # noqa: E402
 _SUFFIX = uuid.uuid4().hex[:8]
 _SCHEMA = f"practice_pcreq_{_SUFFIX}"
 _PATIENT = "5d3a1f92-6c4b-4e18-9a70-2f8b5c1d3e46"
-_TOKEN = "a-valid-patient-credential"  # noqa: S105 - a test credential, not a secret
+_TOKEN = "a-valid-patient-credential"
 
 
 class _SchemaResolver:

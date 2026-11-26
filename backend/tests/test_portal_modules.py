@@ -148,7 +148,7 @@ class TestMountedIsReadFromTheRouteTable:
         off in the capability document, which the intersection cases above
         cover.
         """
-        from app.main import app  # noqa: PLC0415 — the assembled app is the subject
+        from app.main import app
 
         mounted = mounted_modules_on(app)
         assert {"intake", "messaging", "appointments", "documents"} <= mounted
@@ -164,7 +164,7 @@ class TestMountedIsReadFromTheRouteTable:
         misses every included router. Pinned, because the wrong version of
         this reads perfectly and turns every module off.
         """
-        from app.main import app  # noqa: PLC0415
+        from app.main import app
 
         naive = mounted_modules(getattr(route, "path", "") for route in app.routes)
         assert naive == frozenset()

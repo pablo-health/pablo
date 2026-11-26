@@ -78,10 +78,10 @@ def _counting() -> Iterator[_Statements]:
 @pytest.fixture
 def practice(engine: Engine) -> Iterator[SimpleNamespace]:
     """A provisioned practice with its owner's email mapped."""
-    from app.db.platform_models import EmailTenantMappingRow, PracticeRow  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import EmailTenantMappingRow, PracticeRow
+    from app.db.provisioning import create_practice_schema
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -135,8 +135,8 @@ def no_redis() -> Iterator[None]:
 @contextmanager
 def _signed_in(app: FastAPI, email: str) -> Iterator[Any]:
     """A client whose every request carries a verified token for ``email``."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from fastapi.testclient import TestClient
 
     uid = f"fb{uuid.uuid4().hex[:26]}"
     identity = VerifiedIdentity(
@@ -163,7 +163,7 @@ def _signed_in(app: FastAPI, email: str) -> Iterator[Any]:
 
 
 def _resolve(email: str) -> tuple[str, str] | None:
-    from app.auth.service import _resolve_practice_from_email  # noqa: PLC0415
+    from app.auth.service import _resolve_practice_from_email
 
     return _resolve_practice_from_email(email)
 
@@ -225,7 +225,7 @@ def test_a_device_bound_liveness_poll_keeps_its_session(
 def test_a_repeat_resolution_is_served_without_sql(
     practice: SimpleNamespace, redis: FakeRedis
 ) -> None:
-    from app.db.practice_resolution_cache import TTL_SECONDS  # noqa: PLC0415
+    from app.db.practice_resolution_cache import TTL_SECONDS
 
     with _counting() as first:
         assert _resolve(practice.email) == (practice.id, practice.schema)
@@ -250,8 +250,8 @@ def test_no_practice_is_never_cached(practice: SimpleNamespace, redis: FakeRedis
 def test_deactivating_the_practice_is_refused_on_the_next_resolution(
     engine: Engine, practice: SimpleNamespace, redis: FakeRedis
 ) -> None:
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from sqlalchemy.orm import Session
 
     assert _resolve(practice.email) is not None
     with Session(engine) as session:
@@ -267,8 +267,8 @@ def test_deactivating_the_practice_is_refused_on_the_next_resolution(
 def test_a_bulk_deactivation_drops_every_entry(
     engine: Engine, practice: SimpleNamespace, redis: FakeRedis
 ) -> None:
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from sqlalchemy.orm import Session
 
     assert _resolve(practice.email) is not None
     with Session(engine) as session:
@@ -285,8 +285,8 @@ def test_a_deactivation_inside_a_savepoint_drops_the_entry_at_commit(
     engine: Engine, practice: SimpleNamespace, redis: FakeRedis
 ) -> None:
     """A savepoint ending is not the transaction ending: its writes still commit."""
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from sqlalchemy.orm import Session
 
     assert _resolve(practice.email) is not None
     with Session(engine) as session:
@@ -303,8 +303,8 @@ def test_a_deactivation_inside_a_savepoint_drops_the_entry_at_commit(
 def test_removing_the_mapping_drops_the_entry(
     engine: Engine, practice: SimpleNamespace, redis: FakeRedis
 ) -> None:
-    from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import EmailTenantMappingRow
+    from sqlalchemy.orm import Session
 
     assert _resolve(practice.email) is not None
     with Session(engine) as session:
@@ -320,8 +320,8 @@ def test_removing_the_mapping_drops_the_entry(
 def test_a_change_that_rolls_back_leaves_the_entry(
     engine: Engine, practice: SimpleNamespace, redis: FakeRedis
 ) -> None:
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from sqlalchemy.orm import Session
 
     assert _resolve(practice.email) is not None
     with Session(engine) as session:

@@ -57,7 +57,7 @@ _PURGE_TABLES = (
 
 @pytest.fixture
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = f"practice_test_hard_purge_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
@@ -229,8 +229,8 @@ def _run_purge(
     storage: _RecordingStorage,
     compliance: _RecordingComplianceStorage | None = None,
 ) -> int:
-    from app.jobs import hard_purge_cron  # noqa: PLC0415
-    from app.jobs.hard_purge_retention_stub import (  # noqa: PLC0415
+    from app.jobs import hard_purge_cron
+    from app.jobs.hard_purge_retention_stub import (
         register_compliance_retention_stub_writer,
     )
 
@@ -347,8 +347,8 @@ def test_an_ordinary_read_never_runs_the_purge_subquery(engine: Engine, tenant_s
     ``patients`` (row security and all) on every ordinary read of these
     tables: about half the cost of a clinician counting their open notes.
     """
-    from sqlalchemy import create_engine  # noqa: PLC0415
-    from sqlalchemy.pool import NullPool  # noqa: PLC0415
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import NullPool
 
     for hour in (9, 11, 13):
         _seed_client(

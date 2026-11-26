@@ -243,7 +243,7 @@ class TestTheWholeSet:
         can only confirm its own map. Asking the reader's resolver is what
         makes a green here mean the reader can find it.
         """
-        from app.credentialing.status import _mapped_table  # noqa: PLC0415
+        from app.credentialing.status import _mapped_table
 
         unresolved = []
         for field in CHECKLIST_FIELDS:

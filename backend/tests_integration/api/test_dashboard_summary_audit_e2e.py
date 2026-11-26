@@ -103,7 +103,7 @@ def pg_session(engine: Engine) -> Iterator[Session]:
 
 @pytest.fixture
 def e2e_user() -> User:
-    from app.models import User  # noqa: PLC0415  # deferred — see module docstring
+    from app.models import User  # deferred — see module docstring
 
     return User(
         id="90f4936f-8aa2-5988-b6ca-906781bc08c7",
@@ -117,7 +117,7 @@ def e2e_user() -> User:
 
 @pytest.fixture
 def session_repo() -> InMemoryTherapySessionRepository:
-    from app.repositories import InMemoryTherapySessionRepository  # noqa: PLC0415
+    from app.repositories import InMemoryTherapySessionRepository
 
     return InMemoryTherapySessionRepository()
 
@@ -126,7 +126,7 @@ def session_repo() -> InMemoryTherapySessionRepository:
 def patient_repo(
     session_repo: InMemoryTherapySessionRepository,
 ) -> InMemoryPatientRepository:
-    from app.repositories import InMemoryPatientRepository  # noqa: PLC0415
+    from app.repositories import InMemoryPatientRepository
 
     return InMemoryPatientRepository(session_repo=session_repo)
 
@@ -141,7 +141,7 @@ def e2e_client(
 ) -> Iterator[TestClient]:
     # All app imports deferred (see module docstring): a top-level import here
     # would cache settings before the dpop suite sets ENABLE_DPOP_VALIDATION.
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -149,30 +149,30 @@ def e2e_client(
         get_tenant_context,
         require_baa_acceptance,
     )
-    from app.chart_proposals.dependencies import (  # noqa: PLC0415
+    from app.chart_proposals.dependencies import (
         get_chart_proposal_repository,
     )
-    from app.repositories import (  # noqa: PLC0415
+    from app.repositories import (
         InMemoryChartProposalRepository,
         InMemoryNotesRepository,
     )
-    from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
-    from app.routes.scheduling import get_scheduling_service  # noqa: PLC0415
-    from app.routes.sessions import (  # noqa: PLC0415
+    from app.repositories.postgres.audit import PostgresAuditRepository
+    from app.routes.scheduling import get_scheduling_service
+    from app.routes.sessions import (
         get_notes_repository as get_sessions_notes_repository,
     )
-    from app.routes.sessions import (  # noqa: PLC0415
+    from app.routes.sessions import (
         get_patient_repository as get_sessions_patient_repository,
     )
-    from app.routes.sessions import get_session_repository  # noqa: PLC0415
-    from app.scheduling_engine.repositories.appointment import (  # noqa: PLC0415
+    from app.routes.sessions import get_session_repository
+    from app.scheduling_engine.repositories.appointment import (
         InMemoryAppointmentRepository,
     )
-    from app.scheduling_engine.services.scheduling import (  # noqa: PLC0415
+    from app.scheduling_engine.services.scheduling import (
         SchedulingService,
     )
-    from app.services.audit_service import AuditService, get_audit_service  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.services.audit_service import AuditService, get_audit_service
+    from fastapi.testclient import TestClient
 
     def _audit_service() -> AuditService:
         return AuditService(PostgresAuditRepository(pg_session))
@@ -241,7 +241,7 @@ class TestDashboardSummaryAuditBehavior:
         """Seed more awaiting-review sessions than fit inline. The summary must
         persist exactly one ``session_viewed`` per inline row (capped) and zero
         ``patient_viewed`` rows — the blind patient-list read is gone."""
-        from app.models import (  # noqa: PLC0415  # deferred — see module docstring
+        from app.models import (  # deferred — see module docstring
             Patient,
             SessionStatus,
             TherapySession,

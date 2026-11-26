@@ -143,7 +143,7 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
     try:
-        from testcontainers.postgres import PostgresContainer  # noqa: PLC0415
+        from testcontainers.postgres import PostgresContainer
     except ImportError:
         # Tests that need Postgres will fail with a clear KeyError on
         # DATABASE_URL — preferable to a confusing skipif chain.
@@ -178,7 +178,7 @@ def pytest_configure(config: pytest.Config) -> None:
     # NOSUPERUSER + NOBYPASSRLS so RLS policies actually apply).
     # Grant ownership of the ``pablo`` database so migrations can
     # CREATE SCHEMA / CREATE TABLE freely.
-    import psycopg2  # noqa: PLC0415
+    import psycopg2
 
     bootstrap_url = _PgState.container.get_connection_url()
     conn = psycopg2.connect(bootstrap_url)
@@ -217,9 +217,9 @@ def _provision_schemas(database_url: str) -> None:
     step (``bin/migrate.py``) provisions, so the suite runs the same call once
     per session, in its own process like the platform chain above.
     """
-    import subprocess  # noqa: PLC0415
-    import sys  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
+    import subprocess
+    import sys
+    from pathlib import Path
 
     backend_dir = Path(__file__).resolve().parents[1]
     env = {**os.environ, "DATABASE_URL": database_url, "DATABASE_BACKEND": "postgres"}
@@ -262,9 +262,9 @@ def _build_platform_schema(database_url: str) -> None:
     running against a shape production never has is how the drift this chain
     removes went unnoticed for so long.
     """
-    import subprocess  # noqa: PLC0415
-    import sys  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
+    import subprocess
+    import sys
+    from pathlib import Path
 
     backend_dir = Path(__file__).resolve().parents[1]
     env = {**os.environ, "DATABASE_URL": database_url, "DATABASE_BACKEND": "postgres"}
@@ -305,7 +305,7 @@ def clear_fastapi_dependency_caches() -> None:
     naming the three private helpers: they're internal, and upstream has
     already renamed the cache-size constant once.
     """
-    from fastapi.dependencies import models  # noqa: PLC0415
+    from fastapi.dependencies import models
 
     for name in dir(models):
         candidate = getattr(models, name)
@@ -323,7 +323,7 @@ def _raise_on_nested_pool_contract() -> None:
     ``pytest_configure`` must set ``DATABASE_URL`` before anything imports
     ``app.db``.
     """
-    from app.db import raise_on_nested_open  # noqa: PLC0415
+    from app.db import raise_on_nested_open
 
     raise_on_nested_open()
 
@@ -357,7 +357,7 @@ def _isolate_rls_principal() -> Iterator[None]:
     a row that then cannot be read back, which reads as a bug in whatever it
     was testing. Cheaper to reset here, once, than to remember it nine times.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -408,7 +408,7 @@ def engine() -> Iterator[Engine]:
 def fastapi_app() -> FastAPI:
     """The app, imported here rather than at module top: settings are read and
     cached on import, so it must follow ``pytest_configure``."""
-    from app.main import app  # noqa: PLC0415
+    from app.main import app
 
     return app
 

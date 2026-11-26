@@ -54,13 +54,13 @@ os.environ.setdefault("ENVIRONMENT", "development")
 @pytest.fixture
 def addresses(engine: Engine) -> Iterator[SimpleNamespace]:
     """A fresh reserved address and a fresh ordinary one; every row they leave is removed."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeMemberRow,
         UserIdentityRow,
     )
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from sqlalchemy.orm import Session
 
     label = uuid.uuid4().hex[:8]
     reserved = f"e2etest-{label}@pablo.health"
@@ -81,10 +81,10 @@ def addresses(engine: Engine) -> Iterator[SimpleNamespace]:
 @pytest.fixture
 def test_practice(engine: Engine) -> Iterator[SimpleNamespace]:
     """A provisioned practice with nobody mapped to it yet."""
-    from app.db.platform_models import PracticeMemberRow, PracticeRow  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PracticeMemberRow, PracticeRow
+    from app.db.provisioning import create_practice_schema
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     label = uuid.uuid4().hex[:8]
     schema = f"practice_test_reserved_{label}"
@@ -115,8 +115,8 @@ def test_practice(engine: Engine) -> Iterator[SimpleNamespace]:
 @contextmanager
 def _signed_in(app: FastAPI, uid: str, email: str) -> Iterator[Any]:
     """A client whose every request carries a verified token for *uid*."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from fastapi.testclient import TestClient
 
     identity = VerifiedIdentity(
         provider="firebase",
@@ -182,7 +182,7 @@ def test_an_unmapped_reserved_address_resolves_to_no_practice(
     restrict_signups: bool,
 ) -> None:
     """Gated or not, it gets an account and nothing to act on."""
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     monkeypatch.setattr(get_settings(), "restrict_signups", restrict_signups)
     with _signed_in(fastapi_app, _uid(), addresses.reserved) as client:
@@ -211,10 +211,10 @@ def test_a_reserved_address_provisioned_again_reaches_its_new_practice(
     Before the fix the first request claimed a default membership, and the
     membership outranked the mapping written afterwards.
     """
-    from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import EmailTenantMappingRow
+    from app.settings import get_settings
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     monkeypatch.setattr(get_settings(), "restrict_signups", True)
     uid = _uid()
@@ -246,8 +246,8 @@ def test_an_ordinary_address_on_an_ungated_deployment_still_maps_to_the_default(
     addresses: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.db import DEFAULT_PRACTICE_ID  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_ID
+    from app.settings import get_settings
 
     monkeypatch.setattr(get_settings(), "restrict_signups", False)
     with _signed_in(fastapi_app, _uid(), addresses.ordinary) as client:

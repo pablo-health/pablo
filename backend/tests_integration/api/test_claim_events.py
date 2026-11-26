@@ -717,7 +717,7 @@ def test_the_claims_surface_reads_what_the_listener_wrote(engine: Engine) -> Non
     the handle a person uses to find the claim in a payer's portal — and
     looking it up per row is how a list becomes N+1 queries.
     """
-    from app.claims import reminders  # noqa: PLC0415
+    from app.claims import reminders
 
     with _session(engine) as session:
         compliance_reminder_listener(session, _event("deadline_missed"))

@@ -83,21 +83,21 @@ class _RecordingSmtp:
 @pytest.fixture(scope="module", autouse=True)
 def _app_imported() -> None:
     """Import the app once, before any test configures settings around it."""
-    import app.main  # noqa: PLC0415, F401
+    import app.main  # noqa: F401
 
 
 @pytest.fixture(scope="module")
 def slug(engine: Engine) -> Iterator[str]:
     """A provisioned practice with an owner and one other clinician."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticePortalSettingsRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from app.portal.practice_routes import ensure_practice_slug  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from app.portal.practice_routes import ensure_practice_slug
+    from sqlalchemy.orm import Session as OrmSession
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -165,9 +165,9 @@ def slug(engine: Engine) -> Iterator[str]:
 @pytest.fixture
 def self_hosted(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Mail over SMTP (to the double), the step-up code to the log."""
-    from app.portal import factory  # noqa: PLC0415
-    from app.rate_limit import reset_portal_limiters  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.portal import factory
+    from app.rate_limit import reset_portal_limiters
+    from app.settings import get_settings
 
     _RecordingSmtp.sent.clear()
     factory.reset_delivery_registrations()
@@ -254,8 +254,8 @@ def _address(label: str) -> str:
 
 
 def _recover(slug: str, email: str) -> Any:
-    from app.main import app  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.main import app
+    from fastapi.testclient import TestClient
 
     return TestClient(app).post(f"/api/portal/practices/{slug}/recover", json={"email": email})
 
@@ -336,8 +336,8 @@ def test_an_address_nobody_has_gets_the_same_answer_and_no_mail(
 def test_the_lookup_leaves_no_clinician_scope_behind(engine: Engine, slug: str) -> None:
     """Each clinician is armed for one statement. Afterwards the session is
     as unscoped as it was, so nothing later in the request reads as them."""
-    from app.portal.db_store import DbPortalAuthStore  # noqa: PLC0415
-    from app.portal.recovery_gateway import DbRecoveryGateway  # noqa: PLC0415
+    from app.portal.db_store import DbPortalAuthStore
+    from app.portal.recovery_gateway import DbRecoveryGateway
 
     email = _address("scope")
     patient_id = _chart(engine, email=email, clinician=_OWNER, invited=True)
@@ -380,7 +380,7 @@ def test_the_recovery_email_names_the_practice_and_invites_nobody(
 ) -> None:
     """The client asked for this link, so the email says so — through the
     real route, practice lookup and mail sender."""
-    from app.portal.practice_routes import practice_address_for_schema  # noqa: PLC0415
+    from app.portal.practice_routes import practice_address_for_schema
 
     address = practice_address_for_schema(_SCHEMA)
     assert address is not None
@@ -401,7 +401,7 @@ def test_the_recovery_email_names_the_practice_and_invites_nobody(
 
 
 def test_the_primary_clinician_is_named_not_a_co_treater(engine: Engine, slug: str) -> None:
-    from app.portal.clinicians import primary_clinician_name  # noqa: PLC0415
+    from app.portal.clinicians import primary_clinician_name
 
     patient_id = _chart(engine, email=_address("co-treated"), clinician=_OWNER, invited=False)
     _co_treat(engine, patient_id=patient_id, clinician=_MEMBER)
@@ -417,8 +417,8 @@ def test_a_sender_who_is_not_the_primary_still_gets_the_primarys_name(
     """Front-desk staff send invitations for clients who are not theirs. The
     lookup finds the primary anyway, and leaves the sender reading as
     themselves afterwards."""
-    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-    from app.portal.clinicians import primary_clinician_name  # noqa: PLC0415
+    from app.db import arm_current_user_id, set_tenant_schema
+    from app.portal.clinicians import primary_clinician_name
 
     patient_id = _chart(engine, email=_address("front-desk"), clinician=_OWNER, invited=False)
 
@@ -436,7 +436,7 @@ def test_a_sender_who_is_not_the_primary_still_gets_the_primarys_name(
 
 
 def test_a_chart_with_no_primary_clinician_has_no_name(engine: Engine, slug: str) -> None:
-    from app.portal.clinicians import primary_clinician_name  # noqa: PLC0415
+    from app.portal.clinicians import primary_clinician_name
 
     with Session(engine) as session:
         session.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))

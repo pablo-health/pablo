@@ -312,7 +312,7 @@ def test_a_later_stage_failing_cannot_undo_an_earlier_stage(
     reproduced here on purpose: any exception did this, so the test raises the
     cheapest one.
     """
-    from app.claims.submit_worker import SubmitSummary  # noqa: PLC0415
+    from app.claims.submit_worker import SubmitSummary
 
     harness: PipelineHarness = practices["harnesses"]["practice_a"]
     order: list[str] = []

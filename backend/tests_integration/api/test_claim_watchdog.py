@@ -177,7 +177,7 @@ def _seed_claim(engine: Engine, created: object) -> None:
     an INSERT policy that requires ``app.current_user_id`` to be set, which is
     what ``arm_current_user_id`` does and what the app itself relies on.
     """
-    from app.db.models import (  # noqa: PLC0415
+    from app.db.models import (
         ClaimRow,
         PatientClinicianRow,
         PatientCoverageRow,

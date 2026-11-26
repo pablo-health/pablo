@@ -66,7 +66,7 @@ def test_an_edit_to_a_policy_the_applier_itself_recorded_is_put_back(
     Built from the file alone, so that some policies carry the applier's own
     comment after the first pass; ``patients`` in the test above never does.
     """
-    from app.db.provisioning import (  # noqa: PLC0415
+    from app.db.provisioning import (
         TEMPLATE_ROW_SECURITY_MARKER,
         apply_template_sql,
     )

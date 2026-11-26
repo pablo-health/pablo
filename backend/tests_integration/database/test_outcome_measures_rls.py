@@ -60,7 +60,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so the RLS policy CREATEs that reference
     # ``has_patient_access`` (which lives in the ``practice`` template
@@ -125,15 +125,15 @@ def seed_patient_and_grant(engine: Engine, tenant_schema: str) -> tuple[str, str
 
 def _make_repo(engine: Engine, tenant_schema: str, user_id: str):
     """Return a PostgresOutcomeMeasureRepository wired to a real tenant session."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.outcome_measure import (  # noqa: PLC0415
+    from app.repositories.postgres.outcome_measure import (
         PostgresOutcomeMeasureRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(user_id)
@@ -145,7 +145,7 @@ def _make_repo(engine: Engine, tenant_schema: str, user_id: str):
 
 
 def _cleanup_tokens(session, schema_token, uid_token):  # type: ignore[no-untyped-def]
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)
@@ -287,7 +287,7 @@ class TestClinicianBIsIsolated:
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
         """App-layer check raises PatientOutcomeAccessDeniedError for clinician B."""
-        from app.repositories.outcome_measure import (  # noqa: PLC0415
+        from app.repositories.outcome_measure import (
             PatientOutcomeAccessDeniedError,
         )
 
@@ -307,7 +307,7 @@ class TestClinicianBIsIsolated:
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
         """DB-layer: a raw INSERT from clinician B's GUC is rejected by the RLS WITH CHECK."""
-        from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+        from sqlalchemy.exc import ProgrammingError
 
         patient_id, _ = seed_patient_and_grant
         clinician_b = "c2343404-a742-5c53-a0a4-58b5834ffd56"
@@ -433,7 +433,7 @@ class TestSourceCheckConstraint:
     def test_invalid_source_rejected(
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         patient_id, clinician_a = seed_patient_and_grant
 

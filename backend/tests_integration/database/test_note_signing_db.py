@@ -41,7 +41,7 @@ _CLINICIAN = "5c3a9e17-2f6d-5b48-8a90-1d7e3c5f9b24"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -90,9 +90,9 @@ def patient(engine: Engine, tenant_schema: str) -> str:
 def test_the_whole_cycle_survives_the_database(
     engine: Engine, tenant_schema: str, patient: str
 ) -> None:
-    from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
-    from app.services.note_service import NoteService  # noqa: PLC0415
-    from app.services.note_signing import (  # noqa: PLC0415
+    from app.repositories.postgres.note import PostgresNotesRepository
+    from app.services.note_service import NoteService
+    from app.services.note_signing import (
         NoteLockedError,
         verify_addenda_chain,
         verify_signature,

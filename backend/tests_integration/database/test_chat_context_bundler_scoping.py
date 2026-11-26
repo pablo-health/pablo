@@ -73,7 +73,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so the RLS policy CREATEs that reference
     # ``has_patient_access`` (which lives in the ``practice`` template
@@ -141,16 +141,16 @@ def _make_repos(
     engine: Engine, tenant_schema: str, user_id: str
 ) -> tuple[PostgresNotesRepository, PostgresPatientDocumentRepository, Session, object, object]:
     """Wire a ``(notes_repo, patient_documents_repo)`` pair to a real tenant session."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
-    from app.repositories.postgres.patient_document import (  # noqa: PLC0415
+    from app.repositories.postgres.note import PostgresNotesRepository
+    from app.repositories.postgres.patient_document import (
         PostgresPatientDocumentRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(user_id)
@@ -163,7 +163,7 @@ def _make_repos(
 
 
 def _cleanup_tokens(session: Session, schema_token: object, uid_token: object) -> None:
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)  # type: ignore[arg-type]
@@ -175,7 +175,7 @@ def _now() -> datetime:
 
 
 def _make_note(patient_id: str, *, marker: str) -> Note:
-    from app.models import Note  # noqa: PLC0415
+    from app.models import Note
 
     ts = _now()
     return Note(
@@ -190,7 +190,7 @@ def _make_note(patient_id: str, *, marker: str) -> Note:
 
 
 def _make_document(patient_id: str, user_id: str, *, marker: str) -> PatientDocument:
-    from app.models import DocumentCategory, PatientDocument  # noqa: PLC0415
+    from app.models import DocumentCategory, PatientDocument
 
     ts = _now()
     return PatientDocument(
@@ -215,7 +215,7 @@ def _assemble(
     patient_id: str,
     user_id: str,
 ) -> ContextBundle:
-    from app.services.chat_context_bundler import assemble_context_bundle  # noqa: PLC0415
+    from app.services.chat_context_bundler import assemble_context_bundle
 
     return assemble_context_bundle(
         notes_repo=notes_repo,
@@ -430,7 +430,7 @@ class TestSqlFilterPresence:
         notes_repo, docs_repo, session, s_tok, u_tok = _make_repos(engine, tenant_schema, clinician)
         captured: list[tuple[str, dict]] = []
 
-        def _capture(  # noqa: PLR0913 — fixed by SQLAlchemy's event signature
+        def _capture(
             conn: object,
             cursor: object,
             statement: str,

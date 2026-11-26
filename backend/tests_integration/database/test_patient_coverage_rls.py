@@ -48,7 +48,7 @@ _CLINICIAN_B = "2b4e1b9f-7a1d-5a8f-8d7c-7d3a6b2d2b02"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -92,16 +92,16 @@ def patient_id(engine: Engine, tenant_schema: str) -> str:
 
 def _repos(engine: Engine, tenant_schema: str, user_id: str) -> tuple[Any, Any, Any, Any, Any]:
     """Postgres payer + coverage repositories on a tenant session armed as ``user_id``."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+    from app.repositories.postgres.coverage import (
         PostgresPatientCoverageRepository,
         PostgresPayerRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(user_id)
@@ -118,7 +118,7 @@ def _repos(engine: Engine, tenant_schema: str, user_id: str) -> tuple[Any, Any, 
 
 
 def _release(session: Any, schema_token: Any, uid_token: Any) -> None:
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)
@@ -126,7 +126,7 @@ def _release(session: Any, schema_token: Any, uid_token: Any) -> None:
 
 
 def _coverage(patient_id: str, payer_id: str, member_id: str = "W123") -> Any:
-    from app.models.coverage import PatientCoverage  # noqa: PLC0415
+    from app.models.coverage import PatientCoverage
 
     now = datetime.now(UTC)
     return PatientCoverage(
@@ -200,7 +200,7 @@ class TestGranteeCanReadAndWrite:
     def test_add_payer_and_coverage_then_read_back(
         self, engine: Engine, tenant_schema: str, patient_id: str
     ) -> None:
-        from app.services.coverage_intake import new_payer  # noqa: PLC0415
+        from app.services.coverage_intake import new_payer
 
         payers, coverage, session, s_tok, u_tok = _repos(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -219,7 +219,7 @@ class TestGranteeCanReadAndWrite:
     def test_one_active_coverage_per_client(
         self, engine: Engine, tenant_schema: str, patient_id: str
     ) -> None:
-        from app.repositories.coverage import ActiveCoverageExistsError  # noqa: PLC0415
+        from app.repositories.coverage import ActiveCoverageExistsError
 
         _, coverage, session, s_tok, u_tok = _repos(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -278,7 +278,7 @@ class TestNonGranteeIsIsolated:
     def test_clinician_b_insert_rejected_by_rls(
         self, engine: Engine, tenant_schema: str, patient_id: str
     ) -> None:
-        from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+        from sqlalchemy.exc import ProgrammingError
 
         with engine.connect() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))

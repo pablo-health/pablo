@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def session(engine: Engine) -> Iterator[Session]:
-    from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+    from app.db import PLATFORM_SCHEMA
 
     with Session(engine) as s:
         s.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
@@ -46,13 +46,13 @@ def session(engine: Engine) -> Iterator[Session]:
 
 
 def _repo(session: Session):  # type: ignore[no-untyped-def]
-    from app.repositories.postgres.allowlist import PostgresAllowlistRepository  # noqa: PLC0415
+    from app.repositories.postgres.allowlist import PostgresAllowlistRepository
 
     return PostgresAllowlistRepository(session)
 
 
 def _mapping_for(session: Session, email: str):  # type: ignore[no-untyped-def]
-    from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
+    from app.db.platform_models import EmailTenantMappingRow
 
     return session.get(EmailTenantMappingRow, email)
 
@@ -77,7 +77,7 @@ class TestGrantingAlsoMaps:
         ``allowed_emails.practice_id`` used to be left NULL by this path,
         which is how an email ended up allowed with nothing saying where.
         """
-        from app.db.platform_models import PlatformAllowedEmailRow  # noqa: PLC0415
+        from app.db.platform_models import PlatformAllowedEmailRow
 
         email = f"grantee-{uuid.uuid4().hex[:8]}@example.com"
         practice = f"practice-{uuid.uuid4().hex[:8]}"

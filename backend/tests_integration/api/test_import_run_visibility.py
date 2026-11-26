@@ -70,7 +70,7 @@ _PABLO_A = "112092194"
 
 
 def _user(user_id: str) -> User:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=user_id,
@@ -88,7 +88,7 @@ def _user(user_id: str) -> User:
 @pytest.fixture
 def schema(engine: Engine) -> Iterator[str]:
     """A fresh practice per test, registered with Olive as its owner."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     name = f"practice_test_import_vis_{uuid.uuid4().hex[:10]}"
     create_practice_schema(engine, name)
@@ -117,7 +117,7 @@ def acting() -> dict[str, User]:
 def client(
     schema: str, acting: dict[str, User], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> Iterator[TestClient]:
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -126,9 +126,9 @@ def client(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.main import app  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.main import app
+    from fastapi.testclient import TestClient
 
     monkeypatch.setattr(
         "app.db.middleware._resolve_schema_from_request", lambda _r: (schema, "resolved")

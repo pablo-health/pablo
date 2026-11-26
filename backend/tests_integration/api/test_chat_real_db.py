@@ -90,7 +90,7 @@ def _arming_here_stays_here() -> Iterator[None]:
     thread, which sets the process's request ContextVars; that user must not
     be the next module's starting principal.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -110,7 +110,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
     """Provision a tenant schema and map ``_TENANT_EMAIL`` to it, so
     ``e2e_client`` resolves it through the real lookup rather than a stand-in.
     """
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -142,7 +142,7 @@ def e2e_user_id() -> str:
 
 @pytest.fixture
 def e2e_user(e2e_user_id: str):
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=e2e_user_id,
@@ -156,13 +156,13 @@ def e2e_user(e2e_user_id: str):
 
 @pytest.fixture
 def fake_gateway() -> FakeChatLLMGateway:
-    from app.services.chat_llm_gateway import FakeChatLLMGateway  # noqa: PLC0415
+    from app.services.chat_llm_gateway import FakeChatLLMGateway
 
     return FakeChatLLMGateway()
 
 
 @pytest.fixture
-def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
+def e2e_client(
     fastapi_app: FastAPI,
     engine: Engine,
     tenant_schema: str,
@@ -171,8 +171,8 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
     fake_gateway: FakeChatLLMGateway,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -181,9 +181,9 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.routes.chat import get_chat_llm_gateway  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.routes.chat import get_chat_llm_gateway
+    from fastapi.testclient import TestClient
 
     # There's no Firebase token to decode in tests, so stand in for the one
     # thing it would have produced — a verified identity — and let the
@@ -287,7 +287,7 @@ def _create_conversation(
 
 def _parse_sse(body: bytes) -> list[tuple[str, dict]]:
     """Parse ``text/event-stream`` body into ``[(event, data_json), ...]``."""
-    import json as _json  # noqa: PLC0415
+    import json as _json
 
     events: list[tuple[str, dict]] = []
     for block in body.decode().strip().split("\n\n"):
@@ -330,7 +330,7 @@ class TestEmptyAssistantOutputRealDB:
         tenant_schema: str,
         fake_gateway: FakeChatLLMGateway,
     ) -> None:
-        from app.services.chat_llm_gateway import StreamEvent  # noqa: PLC0415
+        from app.services.chat_llm_gateway import StreamEvent
 
         _truncate_tenant_tables(engine, tenant_schema)
         patient = _create_patient(e2e_client)
@@ -400,7 +400,7 @@ class TestEmptyChartFirstTurnRealDB:
         tenant_schema: str,
         fake_gateway: FakeChatLLMGateway,
     ) -> None:
-        from app.services.chat_llm_gateway import StreamEvent  # noqa: PLC0415
+        from app.services.chat_llm_gateway import StreamEvent
 
         _truncate_tenant_tables(engine, tenant_schema)
         patient = _create_patient(e2e_client)
@@ -479,7 +479,7 @@ class TestMultiTurnRealDB:
         tenant_schema: str,
         fake_gateway: FakeChatLLMGateway,
     ) -> None:
-        from app.services.chat_llm_gateway import StreamEvent  # noqa: PLC0415
+        from app.services.chat_llm_gateway import StreamEvent
 
         _truncate_tenant_tables(engine, tenant_schema)
         patient = _create_patient(e2e_client)
@@ -563,9 +563,9 @@ class TestCrossPatientAccessRealDB:
         tenant_schema: str,
         fake_gateway: FakeChatLLMGateway,
     ) -> None:
-        from app.auth.service import require_baa_acceptance  # noqa: PLC0415
-        from app.models import User  # noqa: PLC0415
-        from app.services.chat_llm_gateway import StreamEvent  # noqa: PLC0415
+        from app.auth.service import require_baa_acceptance
+        from app.models import User
+        from app.services.chat_llm_gateway import StreamEvent
 
         _truncate_tenant_tables(engine, tenant_schema)
         patient = _create_patient(e2e_client)
@@ -707,8 +707,8 @@ class TestConnectionReleasedAcrossLLMCall:
         fake_gateway: FakeChatLLMGateway,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from app.db import get_db_session  # noqa: PLC0415
-        from app.services.chat_llm_gateway import StreamEvent  # noqa: PLC0415
+        from app.db import get_db_session
+        from app.services.chat_llm_gateway import StreamEvent
 
         _truncate_tenant_tables(engine, tenant_schema)
         patient = _create_patient(e2e_client)
@@ -758,13 +758,13 @@ class TestPriorTurnWindowRealDB:
         tenant_schema: str,
         e2e_user_id: str,
     ) -> None:
-        from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-        from app.repositories.postgres.chat import PostgresChatRepository  # noqa: PLC0415
-        from app.services.chat_turn_service import (  # noqa: PLC0415
+        from app.db import arm_current_user_id, set_tenant_schema
+        from app.repositories.postgres.chat import PostgresChatRepository
+        from app.services.chat_turn_service import (
             PRIOR_TURNS_HEAD,
             PRIOR_TURNS_TAIL,
         )
-        from sqlalchemy.orm import Session  # noqa: PLC0415
+        from sqlalchemy.orm import Session
 
         _truncate_tenant_tables(engine, tenant_schema)
         patient = _create_patient(e2e_client)

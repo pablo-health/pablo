@@ -51,15 +51,15 @@ _GOOGLE = {"sign_in_provider": "google.com"}
 @pytest.fixture
 def practice(engine: Engine) -> Iterator[SimpleNamespace]:
     """A practice as payment leaves it: provisioned, with its owner's email mapped and no user."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
         UserIdentityRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -105,8 +105,8 @@ def _signed_in(
     app: FastAPI, uid: str, email: str, *, verified: bool, firebase: dict[str, Any] | None = None
 ) -> Iterator[Any]:
     """A client whose every request carries a token for *uid*."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from fastapi.testclient import TestClient
 
     identity = VerifiedIdentity(
         provider="firebase",
@@ -288,13 +288,13 @@ def test_a_first_sign_in_reads_the_practice_it_was_just_mapped_to(
     practice schema; the status check it makes reads practice tables and must
     find the practice, not fail.
     """
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         UserIdentityRow,
     )
-    from app.settings import get_settings  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.settings import get_settings
+    from sqlalchemy.orm import Session
 
     monkeypatch.setattr(get_settings(), "restrict_signups", False)
     uid = _uid()

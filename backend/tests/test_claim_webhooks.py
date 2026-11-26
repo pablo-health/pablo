@@ -368,7 +368,7 @@ def practices(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[PipelineHarness]
         yield object()
 
     def route_for_control_numbers(numbers: Collection[str]) -> Any | None:
-        from app.claims.routing import ClaimRoute  # noqa: PLC0415
+        from app.claims.routing import ClaimRoute
 
         for context, harness in zip(contexts, harnesses, strict=True):
             if any(harness.claims.get_by_control_number(n) is not None for n in numbers):

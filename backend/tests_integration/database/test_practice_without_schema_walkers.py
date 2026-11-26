@@ -80,8 +80,8 @@ def _register_without_schema(engine: Engine, provisioning_status: str) -> str:
 @pytest.fixture(scope="module")
 def scratch_url() -> Iterator[str]:
     """A booted database with one ready practice and four with no schema."""
-    from app.db.platform_bootstrap import bring_platform_to_head  # noqa: PLC0415
-    from app.db.provisioning import ensure_schemas  # noqa: PLC0415
+    from app.db.platform_bootstrap import bring_platform_to_head
+    from app.db.provisioning import ensure_schemas
 
     scratch = scratch_db.scratch_name("pablo_noschema")
     admin = create_engine(_DB_URL, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
@@ -124,7 +124,7 @@ def _ready_schemas(engine: Engine) -> list[str]:
 def test_the_listings_return_the_ready_practice_and_none_without_a_schema(
     engine: Engine,
 ) -> None:
-    from app.db.migrate_tenants import (  # noqa: PLC0415
+    from app.db.migrate_tenants import (
         list_active_practice_registry,
         list_active_tenant_schemas,
     )
@@ -164,14 +164,14 @@ def test_migrate_tenants_migrates_the_ready_practice_and_exits_zero(
 
 
 def test_audit_retention_runs_to_completion(engine: Engine) -> None:
-    from app.jobs import audit_retention_cron  # noqa: PLC0415
+    from app.jobs import audit_retention_cron
 
     with patch.object(audit_retention_cron, "get_engine", return_value=engine):
         assert audit_retention_cron.run([]) == 0
 
 
 def test_hard_purge_runs_to_completion(engine: Engine) -> None:
-    from app.jobs import hard_purge_cron  # noqa: PLC0415
+    from app.jobs import hard_purge_cron
 
     with patch.object(hard_purge_cron, "get_engine", return_value=engine):
         assert hard_purge_cron.run([]) == 0

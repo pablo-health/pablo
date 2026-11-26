@@ -65,7 +65,7 @@ class _Seed:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -150,8 +150,8 @@ def client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
     """The real route stack as the clinician, wired as the homework route suite is."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -160,9 +160,9 @@ def client(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.models import User
+    from fastapi.testclient import TestClient
 
     user = User(
         id=_CLINICIAN,
@@ -370,7 +370,7 @@ def test_the_engine_refuses_a_client_without_a_grant_on_its_own(
     so the only thing left between the request and the table is the engine's
     own grant check: none for the stranger, an expired one for the lapsed client.
     """
-    from types import SimpleNamespace  # noqa: PLC0415
+    from types import SimpleNamespace
 
     monkeypatch.setattr(
         "app.routes.waitlist.visible_patient",
@@ -398,8 +398,8 @@ def test_the_grant_check_decides_by_its_own_predicate(engine: Engine, tenant_sch
     through the client's own policy, because the grant table shows a session
     only its own user's grants.
     """
-    from app.waitlist.repository import WaitlistRepository  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.waitlist.repository import WaitlistRepository
+    from sqlalchemy.orm import Session as OrmSession
 
     now = datetime.now(UTC).replace(microsecond=0)
     held, lapsed, not_yet, deleted = (str(uuid.uuid4()) for _ in range(4))
