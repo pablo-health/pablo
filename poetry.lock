@@ -5467,14 +5467,14 @@ types-cffi = "*"
 
 [[package]]
 name = "types-python-dateutil"
-version = "2.9.0.20261104"
+version = "2.9.0.20261122"
 description = "Typing stubs for python-dateutil"
 optional = false
 python-versions = ">=3.10"
 groups = ["dev"]
 files = [
-    {file = "types_python_dateutil-2.9.0.20261104-py3-none-any.whl", hash = "sha256:f6ee76c91c547716b4795373a53d4c07e8e06cf98384ecb89fcf134d212de2ad"},
-    {file = "types_python_dateutil-2.9.0.20261104.tar.gz", hash = "sha256:5d0495702a5f7343741f5d842c531bcd1c941da8b4a85307d52ef43ba80252db"},
+    {file = "types_python_dateutil-2.9.0.20261122-py3-none-any.whl", hash = "sha256:c2c257d7ce04f8ede622bb2452223461ee3016872f59d2351522723073e226ff"},
+    {file = "types_python_dateutil-2.9.0.20261122.tar.gz", hash = "sha256:1db0012e9e63028891e36fd8a9f685dc4e8cf89353fbefcf6b1eb55538e9f7ed"},
 ]
 
 [[package]]
