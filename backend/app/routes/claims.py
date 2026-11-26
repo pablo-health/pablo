@@ -56,6 +56,7 @@ from pydantic import BaseModel
 
 from ..api_errors import NotFoundError, UnprocessableEntityError
 from ..auth.service import require_baa_acceptance
+from ..billing_access import read_enrollment_status
 from ..claims import reminders
 from ..claims.assembly import (
     AppointmentNotFoundError,
@@ -74,8 +75,8 @@ from ..claims.holds import (
     settle,
     withheld_cents,
 )
-from ..claims.scrub import scrub
-from ..claims.tracker import next_action_for
+from ..claims.scrub import rendering_in_network, scrub
+from ..claims.tracker import hops, next_action_for
 from ..claims.transitions import ClaimNotValidError, advance
 from ..db import get_db_session
 from ..models.audit import AuditAction, ResourceType
@@ -84,7 +85,6 @@ from ..models.claims import (
     Claim,
     ClaimDeadlinesResponse,
     ClaimDetailResponse,
-    ClaimHop,
     ClaimListResponse,
     ClaimResponse,
     ClaimState,
@@ -101,6 +101,7 @@ from ..models.claims_holds import (
     RemittanceHoldResponse,
     ResolveHoldRequest,
 )
+from ..people_term_lookup import practice_row_for
 from ..repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
@@ -120,7 +121,7 @@ from ..utcnow import utc_now
 from ._deps import client_not_found, visible_patient
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from datetime import tzinfo
 
     from sqlalchemy.orm import Session
@@ -128,7 +129,6 @@ if TYPE_CHECKING:
     from ..claims.scrub import Finding
     from ..db.models import ClaimReminderRow
     from ..models import User
-    from ..models.claims import ClaimReceipt
     from ..models.coverage import Payer
     from ..models.patient import Patient
     from ..repositories.claim_receipts import ClaimReceiptRepository
@@ -207,6 +207,21 @@ def get_claim_sources(
 Sources = Annotated[ClaimSources, Depends(get_claim_sources)]
 
 
+def get_enrollment_lookup(user: CurrentUser) -> Callable[[Claim], str | None]:
+    """Where a claim's clinician stands with its payer, as far as ``user`` may see."""
+
+    def lookup(claim: Claim) -> str | None:
+        practice = practice_row_for(user)
+        if practice is None:
+            return None
+        return read_enrollment_status(get_db_session(), practice, user, claim)
+
+    return lookup
+
+
+Enrollment = Annotated["Callable[[Claim], str | None]", Depends(get_enrollment_lookup)]
+
+
 def _practice_timezone(users: UserRepository, user_id: str) -> tzinfo:
     """The clinician's calendar timezone; UTC if it is unset or unknown."""
     try:
@@ -256,51 +271,6 @@ def _to_findings(findings: list[Finding]) -> list[FindingResponse]:
 
 def _to_response(claim: Claim) -> ClaimResponse:
     return ClaimResponse(**claim.model_dump())
-
-
-#: The states at or past each hop, in the order the claim reaches them. A
-#: rejection or a stall keeps whatever hops the claim had already passed,
-#: which its timestamps say; the table only decides the untimestamped one.
-_PAST_CLEARINGHOUSE: frozenset[str] = frozenset(
-    {"ch_accepted", "payer_accepted", "paid", "partial", "denied"}
-)
-
-
-def _hops(claim: Claim, receipts: list[ClaimReceipt]) -> list[ClaimHop]:
-    """Where the claim has been, read off its receipt timestamps.
-
-    The clearinghouse hop has no column of its own on the row; its moment
-    is the ``ch_accepted`` receipt's, when the pipeline recorded one.
-    """
-    clearinghouse_at = next(
-        (
-            r.occurred_at
-            for r in receipts
-            if r.kind == "ch_accepted" and r.to_state == "ch_accepted"
-        ),
-        None,
-    )
-    return [
-        ClaimHop(kind="built", reached=True, at=claim.created_at),
-        ClaimHop(kind="submitted", reached=claim.submitted_at is not None, at=claim.submitted_at),
-        ClaimHop(
-            kind="clearinghouse_accepted",
-            reached=(
-                claim.state in _PAST_CLEARINGHOUSE
-                or claim.payer_accepted_at is not None
-                or clearinghouse_at is not None
-            ),
-            at=clearinghouse_at,
-        ),
-        ClaimHop(
-            kind="payer_accepted",
-            reached=claim.payer_accepted_at is not None,
-            at=claim.payer_accepted_at,
-        ),
-        ClaimHop(
-            kind="adjudicated", reached=claim.adjudicated_at is not None, at=claim.adjudicated_at
-        ),
-    ]
 
 
 def _deadlines(claim: Claim, payer: Payer | None, today: date) -> ClaimDeadlinesResponse:
@@ -391,17 +361,26 @@ def build_claim(
 
 
 def _to_detail(
-    claim: Claim, patient: Patient, payer: Payer | None, receipts: ClaimReceiptRepository
+    claim: Claim,
+    patient: Patient,
+    payer: Payer | None,
+    receipts: ClaimReceiptRepository,
+    enrollment: str | None,
 ) -> ClaimDetailResponse:
-    """The claim as the detail view sees it, receipts and all."""
+    """The claim as the detail view sees it, receipts and all.
+
+    ``enrollment`` is the clinician's participation status with the payer, if known.
+    """
     today = utc_now().date()
     collected = receipts.list_for_claim(claim.id)
     return ClaimDetailResponse(
         **claim.model_dump(),
         patient_name=patient.display_name,
         payer_name=payer.name if payer is not None else None,
-        findings=_to_findings(scrub(claim, today=today)),
-        hops=_hops(claim, collected),
+        findings=_to_findings(
+            [*scrub(claim, today=today), *rendering_in_network(claim, enrollment)]
+        ),
+        hops=hops(claim, collected),
         deadlines=_deadlines(claim, payer, today),
         receipts=collected,
         next_action=next_action_for(claim),
@@ -754,6 +733,7 @@ def get_claim(
     claim_id: str,
     request: Request,
     user: CurrentUser,
+    enrollment: Enrollment,
     claims: ClaimsRepo,
     patients: PatientsRepo,
     payers: PayersRepo,
@@ -770,7 +750,7 @@ def get_claim(
         patient=patient,
         changes=_audit_changes(claim),
     )
-    return _to_detail(claim, patient, payers.get(claim.payer_id), receipts)
+    return _to_detail(claim, patient, payers.get(claim.payer_id), receipts, enrollment(claim))
 
 
 @router.post("/{claim_id}/validate", response_model=ValidateClaimResponse)

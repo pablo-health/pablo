@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Literal
 
+from ..credentialing.participation import _CONTRACTED_STATUSES
 from ..db.models import CLAIM_CONTROL_NUMBER_MAX_LENGTH
 from .validation import dx_at_highest_specificity, dx_pointers_valid, missing_fields
 
@@ -531,6 +532,29 @@ def rendering_taxonomy_present(claim: Claim) -> list[Finding]:
             "The rendering provider has no taxonomy code on their profile. Some payers "
             "deny without one.",
             "rendering_provider.taxonomy_code",
+        )
+    ]
+
+
+def rendering_in_network(claim: Claim, status: str | None) -> list[Finding]:
+    """Warn when the clinician who held the visit has no contract with the payer.
+
+    ``status`` is their participation status (``billing_access.read_enrollment_status``),
+    read by the caller because this module touches no database. ``None`` is
+    not known, and warns of nothing. A warning, not a block: the practice may
+    know something the panel record does not.
+    """
+    if status is None or status in _CONTRACTED_STATUSES:
+        return []
+    rendering = claim.billing_snapshot.rendering_provider
+    name = " ".join(n for n in (rendering.first_name, rendering.last_name) if n)
+    payer = claim.subscriber_snapshot.payer_name
+    return [
+        _warning(
+            "rendering_not_in_network",
+            f"{name or 'The clinician who held this session'} is not in network with "
+            f"{payer or 'this payer'} yet. Check before you send this claim.",
+            "rendering_provider",
         )
     ]
 

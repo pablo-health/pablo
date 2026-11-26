@@ -1,7 +1,8 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The three reads that see the whole practice: who its clients are, which
-outside event is already booked, and what a claim for any session needs.
+"""The reads that see the whole practice: who its clients are, which outside
+event is already booked, what a claim for any session needs, and whether
+the clinician who held it is in network with the claim's payer.
 
 A client belongs to the practice, not to one clinician, so matching a
 calendar event or a feed code must see every chart in the practice — or it
@@ -30,6 +31,13 @@ own guard is the armed clinician, like the others'; who may bill is decided
 in the app, by ``app.billing_access.can_bill``, before the call. The
 practice owner is recorded on the platform practice row by email, which this
 schema cannot see, so the function cannot make that check itself.
+
+``practice_enrollment_status(appointment_id, payer_id)`` is the status of
+the visit's clinician with that payer in this practice, from
+``platform.payer_participations``, whose own policy shows a clinician only
+their own rows. The role reads four columns of that table, through a policy
+that also requires the row's practice to be on the function's pinned path;
+the grant and policy are on the platform chain. Same gate as the claim source.
 
 **Why they need a role of their own.** The app's role owns the tenant tables
 and they are ``FORCE ROW LEVEL SECURITY``, so a ``SECURITY DEFINER`` function
@@ -85,6 +93,8 @@ from .practice_directory_definitions import (
     DIRECTORY_FUNCTION,
     DIRECTORY_POLICY,
     DIRECTORY_ROLE,
+    ENROLLMENT_COLUMNS,
+    ENROLLMENT_FUNCTION,
     GRANT_COLUMNS,
     OUTSIDE_APPOINTMENT_FUNCTION,
     PATIENT_COLUMNS,
@@ -94,10 +104,12 @@ from .practice_directory_functions import (
     create_claim_source_function,
     create_directory_function,
     create_directory_function_sql,
+    create_enrollment_function,
     create_outside_appointment_function,
     directory_function_owner,
     drop_claim_source_function,
     drop_directory_function,
+    drop_enrollment_function,
     drop_outside_appointment_function,
     outside_appointment_function_sql,
     require_directory_role,
@@ -109,6 +121,8 @@ __all__ = [
     "DIRECTORY_FUNCTION",
     "DIRECTORY_POLICY",
     "DIRECTORY_ROLE",
+    "ENROLLMENT_COLUMNS",
+    "ENROLLMENT_FUNCTION",
     "GRANT_COLUMNS",
     "OUTSIDE_APPOINTMENT_FUNCTION",
     "PATIENT_COLUMNS",
@@ -117,11 +131,13 @@ __all__ = [
     "create_claim_source_function",
     "create_directory_function",
     "create_directory_function_sql",
+    "create_enrollment_function",
     "create_outside_appointment_function",
     "directory_access_sql",
     "directory_function_owner",
     "drop_claim_source_function",
     "drop_directory_function",
+    "drop_enrollment_function",
     "drop_outside_appointment_function",
     "outside_appointment_function_sql",
     "require_directory_role",

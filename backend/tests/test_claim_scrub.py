@@ -16,7 +16,8 @@ import json
 from datetime import date
 from pathlib import Path
 
-from app.claims.scrub import Finding, blocking, scrub
+import pytest
+from app.claims.scrub import Finding, blocking, rendering_in_network, scrub
 
 from tests.claims_fixtures import (
     TODAY,
@@ -412,3 +413,22 @@ def test_missing_taxonomy_is_a_warning_only() -> None:
 
 def test_taxonomy_present_passes() -> None:
     assert "taxonomy_missing" not in _codes(_findings())
+
+
+# ---------------------------------------------------------------------------
+# The rendering clinician's network status (read by the caller)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", ["out_of_network", "credentialed", "application_submitted"])
+def test_not_contracted_is_a_warning_naming_the_clinician_and_payer(status: str) -> None:
+    [finding] = rendering_in_network(claim(), status)
+    assert (finding.severity, finding.code) == ("warning", "rendering_not_in_network")
+    assert finding.message == (
+        "Jane Smith is not in network with Stedi Test Payer yet. Check before you send this claim."
+    )
+
+
+@pytest.mark.parametrize("status", ["contracted", "in_network", None])
+def test_contracted_or_unknown_status_passes(status: str | None) -> None:
+    assert rendering_in_network(claim(), status) == []

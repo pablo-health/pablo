@@ -193,10 +193,16 @@ def _pg_dump_platform_schema(container: object) -> str:
     return result.stdout
 
 
+#: A row policy naming a role (pg_dump writes ``TO public`` as no clause). The
+#: baseline applies this file before ``d4a7e2c91b06`` makes any role, so the
+#: revision that creates such a policy is what makes it on a fresh install too.
+_ROLE_POLICY = re.compile(r"CREATE POLICY \S+ ON platform\.\S+(?: AS \w+)?(?: FOR \w+)? TO ")
+
+
 def _is_noise(stripped: str) -> bool:
     """Whether a (stripped, non-empty) dump line belongs in the template.
 
-    Four kinds of line do not:
+    Five kinds of line do not:
 
     * pg_dump section banners (``-- Name: ...``), which add diff churn and no
       information.
@@ -207,6 +213,7 @@ def _is_noise(stripped: str) -> bool:
     * ``\\restrict`` / ``\\unrestrict``, psql meta-commands that pg_dump 17+ emits
       to fence its output against older psql. Not valid SQL, so they have to go
       before anything executes this.
+    * A policy naming a role; see :data:`_ROLE_POLICY`.
     """
     return (
         stripped.startswith("--")
@@ -215,6 +222,7 @@ def _is_noise(stripped: str) -> bool:
         or stripped.startswith("CREATE SCHEMA IF NOT EXISTS platform")
         or stripped.startswith("ALTER SCHEMA platform OWNER")
         or stripped.startswith(("\\restrict", "\\unrestrict"))
+        or _ROLE_POLICY.match(stripped) is not None
     )
 
 

@@ -31,6 +31,7 @@ from ..services import AuditService, get_audit_service
 from .claims import (
     ClaimsRepo,
     CurrentUser,
+    Enrollment,
     PatientsRepo,
     PayersRepo,
     ReceiptsRepo,
@@ -68,6 +69,7 @@ def check_claim_status(
     payers: PayersRepo,
     client: Clearinghouse,
     session: DbSession,
+    enrollment: Enrollment,
     audit: AuditService = Depends(get_audit_service),
 ) -> ClaimDetailResponse:
     """Ask the clearinghouse about this claim now and return where it stands."""
@@ -90,4 +92,6 @@ def check_claim_status(
         patient=patient,
         changes=_audit_changes(refreshed),
     )
-    return _to_detail(refreshed, patient, payers.get(refreshed.payer_id), receipts)
+    return _to_detail(
+        refreshed, patient, payers.get(refreshed.payer_id), receipts, enrollment(refreshed)
+    )

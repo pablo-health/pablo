@@ -137,6 +137,7 @@ def test_the_directory_access_names_every_table_and_function_once() -> None:
         "practice_client_directory()",
         "practice_outside_appointment(text, text, text)",
         "practice_claim_source(uuid)",
+        "practice_enrollment_status(uuid, uuid)",
     ):
         assert f"ALTER FUNCTION practice_x.{function} OWNER TO {DIRECTORY_ROLE};" in sql
         assert (
@@ -144,7 +145,7 @@ def test_the_directory_access_names_every_table_and_function_once() -> None:
             "SET search_path = pg_catalog, practice_x, pg_temp;" in sql
         )
     # The role may create in the schema only while it is being made an owner.
-    assert sql.count("GRANT CREATE ON SCHEMA") == sql.count("REVOKE CREATE ON SCHEMA") == 3
+    assert sql.count("GRANT CREATE ON SCHEMA") == sql.count("REVOKE CREATE ON SCHEMA") == 4
     assert sql.rstrip().endswith(f"REVOKE CREATE ON SCHEMA practice_x FROM {DIRECTORY_ROLE};")
 
 

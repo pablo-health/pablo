@@ -135,6 +135,26 @@ CREATE FUNCTION __TENANT_SCHEMA__.practice_client_directory() RETURNS TABLE(id u
 
 
 
+CREATE FUNCTION __TENANT_SCHEMA__.practice_enrollment_status(p_appointment_id uuid, p_payer_id uuid) RETURNS TABLE(status character varying)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+        SELECT pp.status
+        FROM __TENANT_SCHEMA__.appointments a
+        LEFT JOIN platform.payer_participations pp
+          ON pp.user_id = a.user_id
+         AND pp.payer_id = p_payer_id
+         AND pp.practice_id = (
+             SELECT c.relnamespace::pg_catalog.regnamespace::text
+             FROM pg_catalog.pg_class c
+             WHERE c.oid = '__TENANT_SCHEMA__.appointments'::pg_catalog.regclass
+         )
+        WHERE a.id = p_appointment_id
+          AND coalesce(current_setting('app.current_user_id', true), '') <> ''
+    $$;
+
+
+
 CREATE FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(p_source text, p_calendar_id text, p_event_id text) RETURNS uuid
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'pg_temp'
@@ -4532,5 +4552,13 @@ ALTER FUNCTION __TENANT_SCHEMA__.practice_claim_source(uuid) SET search_path = p
 GRANT CREATE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
 
 ALTER FUNCTION __TENANT_SCHEMA__.practice_claim_source(uuid) OWNER TO pablo_practice_directory;
+
+REVOKE CREATE ON SCHEMA __TENANT_SCHEMA__ FROM pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_enrollment_status(uuid, uuid) SET search_path = pg_catalog, __TENANT_SCHEMA__, pg_temp;
+
+GRANT CREATE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_enrollment_status(uuid, uuid) OWNER TO pablo_practice_directory;
 
 REVOKE CREATE ON SCHEMA __TENANT_SCHEMA__ FROM pablo_practice_directory;
