@@ -47,6 +47,7 @@ a log line.
 
 from __future__ import annotations
 
+from collections.abc import Callable  # at run time: FastAPI evaluates the lookup's signature
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -121,7 +122,7 @@ from ..utcnow import utc_now
 from ._deps import client_not_found, visible_patient
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Mapping
     from datetime import tzinfo
 
     from sqlalchemy.orm import Session
