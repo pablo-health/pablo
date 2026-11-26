@@ -16,7 +16,7 @@ Every arm needs an armed clinician: with nothing armed the table reads
 empty, like every other tenant table.
 
 One definition, applied at provisioning and on every migrate fan-out by
-``enable_rls_on_schema``, and by the revision that adds the columns, so the
+``infer_rls_on_schema``, and by the revision that adds the columns, so the
 three never disagree.
 """
 

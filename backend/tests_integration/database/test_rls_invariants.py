@@ -29,7 +29,7 @@ What this asserts:
 3. **Fail-closed contract.** As the ``pablo`` role, without setting
    ``app.current_user_id``, every patient-scoped table must return zero
    rows. This locks in the "no GUC = no rows" invariant that the
-   codebase advertises (e.g. ``enable_rls_on_schema`` docstring). If a
+   codebase advertises (e.g. ``infer_rls_on_schema`` docstring). If a
    future policy edit accidentally allows rows when the GUC is unset,
    this test catches it.
 
@@ -153,7 +153,7 @@ class TestPabloRoleAttributes:
 class TestTenantRlsEnabled:
     """Every patient-scoped table in a fresh tenant has RLS forced on.
 
-    ``enable_rls_on_schema`` is the function that should put each table
+    ``infer_rls_on_schema`` is the function that should put each table
     in the right state. This test pins its post-condition — if a future
     contributor adds a new patient-scoped table and forgets to teach
     that function about it, the table here will fail the
@@ -658,7 +658,7 @@ class TestArmCurrentUserIdEnablesProfileWrite:
                 .one_or_none()
             )
         assert row is not None, "clinician_profiles missing from the provisioned tenant schema"
-        # user_id-scoped, not skipped (the enable_rls_on_schema docstring
+        # user_id-scoped, not skipped (the infer_rls_on_schema docstring
         # once wrongly claimed otherwise).
         assert row["relrowsecurity"], f"clinician_profiles must have RLS enabled. Got {dict(row)}."
         assert row["relforcerowsecurity"], (
@@ -730,7 +730,7 @@ class TestArmCurrentUserIdEnablesProfileWrite:
 class TestOverlayNotRowScopedRegistry:
     """A deployment can register extra non-row-scoped tenant tables.
 
-    ``enable_rls_on_schema`` refuses to leave a force-RLS'd tenant table
+    ``infer_rls_on_schema`` refuses to leave a force-RLS'd tenant table
     with no policy (a silent deny-all). A deployment-specific tenant
     table that carries only an ``id`` column — its isolation boundary is
     the tenant schema, not a per-row predicate — would trip that guard.
@@ -781,10 +781,10 @@ class TestOverlayNotRowScopedRegistry:
         return row["relrowsecurity"], row["relforcerowsecurity"]
 
     def test_unregistered_id_only_table_raises(self, engine: Engine, bare_schema: str) -> None:
-        from app.db import enable_rls_on_schema  # noqa: PLC0415
+        from app.db import infer_rls_on_schema  # noqa: PLC0415
 
         with OrmSession(bind=engine) as session, pytest.raises(RuntimeError) as exc:
-            enable_rls_on_schema(session, bare_schema)
+            infer_rls_on_schema(session, bare_schema)
         assert "no RLS policy defined" in str(exc.value), (
             "An id-only tenant table with no policy branch and no "
             "registration must raise the deny-all guard."
@@ -795,7 +795,7 @@ class TestOverlayNotRowScopedRegistry:
     ) -> None:
         from app.db import (  # noqa: PLC0415
             _OVERLAY_NOT_ROW_SCOPED,
-            enable_rls_on_schema,
+            infer_rls_on_schema,
             register_overlay_not_row_scoped,
         )
 
@@ -803,10 +803,10 @@ class TestOverlayNotRowScopedRegistry:
         try:
             # (a) No RuntimeError — the guard now treats it as not-row-scoped.
             with OrmSession(bind=engine) as session:
-                enable_rls_on_schema(session, bare_schema)
+                infer_rls_on_schema(session, bare_schema)
 
             # (b) Same RLS state as a built-in not_row_scoped table:
-            # ``enable_rls_on_schema`` leaves RLS disabled on those.
+            # ``infer_rls_on_schema`` leaves RLS disabled on those.
             rowsec, forcesec = self._rls_state(engine, bare_schema, "overlay_only_table")
             assert rowsec is False, (
                 "A registered not-row-scoped table must have RLS left "

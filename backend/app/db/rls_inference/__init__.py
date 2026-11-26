@@ -4,7 +4,7 @@
 
 The planner that decides a tenant table's policies from its shape: which of
 ``id`` / ``user_id`` / ``patient_id`` / ``note_id`` it carries, plus what a
-deployment registered. ``app.db.enable_rls_on_schema`` calls it, and the regen
+deployment registered. ``app.db.infer_rls_on_schema`` calls it, and the regen
 captures what it produces into ``tenant_template.sql``.
 
 Every function here takes the registrations it needs as arguments

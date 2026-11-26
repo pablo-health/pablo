@@ -31,10 +31,10 @@ _REVIEWED = {
     "bin/adopt_intake_submissions.py": 1,
     "db/__init__.py": 5,
     "db/intake_seed.py": 1,
-    "db/migrate_tenants.py": 2,
+    "db/migrate_tenants.py": 1,
     # A fresh Session on a dedicated connection, for the RLS reconcile.
     "db/practice_archive.py": 1,
-    "db/provisioning.py": 4,
+    "db/provisioning.py": 3,
     "db/single_practice_migration.py": 1,
     "jobs/audit_retention_cron.py": 2,
     "jobs/hard_purge_cron.py": 7,

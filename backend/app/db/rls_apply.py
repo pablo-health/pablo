@@ -93,8 +93,8 @@ def apply_tenant_rls(
     they started. Does not commit: each table it changes stays locked until
     the caller does, so commit once per schema.
 
-    Do not run this and ``enable_rls_on_schema`` over the same schema. Each
-    reads the other's comment on a policy as not its own and rebuilds it.
+    Run-time callers go through ``rls_runtime.apply_practice_rls``, which
+    reads the templates and passes ``desired`` here.
     """
     # Imported here: the package imports this module's callers.
     from . import RlsReconcileCounts, _validate_schema_name

@@ -361,7 +361,7 @@ class NoteSignatureRow(Base):
     ``app.services.note_signing``), so an after-the-fact change to a signed
     version is detectable.
 
-    Readable exactly when its note is: ``enable_rls_on_schema`` gives it the
+    Readable exactly when its note is: ``infer_rls_on_schema`` gives it the
     note-child policy, so a restricted note's versions stay its author's.
     """
 
@@ -1573,7 +1573,7 @@ class PatientMessageRow(Base):
     """One message in a :class:`PatientMessageThreadRow`.
 
     ``patient_id`` is denormalized from the thread on purpose. Every
-    per-patient policy in :func:`app.db.enable_rls_on_schema` — the clinician
+    per-patient policy in :func:`app.db.infer_rls_on_schema` — the clinician
     ``has_patient_access`` arm and the patient-principal arm alike — keys on a
     ``patient_id`` column, so carrying it means this table needs no bespoke
     policy branch at all. ``chat_messages`` is the counter-example: it has no
@@ -1657,7 +1657,7 @@ class PatientMessageAttachmentRow(Base):
 
     ``patient_id`` is denormalized from the message for the reason
     :class:`PatientMessageRow` gives: every per-patient policy in
-    :func:`app.db.enable_rls_on_schema` keys on a ``patient_id`` column, so
+    :func:`app.db.infer_rls_on_schema` keys on a ``patient_id`` column, so
     carrying it means this table needs no bespoke policy branch. Two
     composite foreign keys keep the copy honest, and they are the two ways it
     could drift — the link cannot name a message belonging to another
@@ -1800,7 +1800,7 @@ class ClientAiConsentEventRow(Base):
     it at all.
 
     Patient-scoped through ``has_patient_access`` like ``notes``: the row
-    carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
+    carries ``patient_id`` and no ``user_id``, so ``infer_rls_on_schema``
     gives it the patient-access policy with no bespoke branch.
     """
 
@@ -2375,7 +2375,7 @@ class InboxItemStateRow(Base):
     an item was handled survives an undo. The partial unique index keeps one
     live row per clinician per item.
 
-    **Per clinician.** ``user_id`` carries the row, so ``enable_rls_on_schema``
+    **Per clinician.** ``user_id`` carries the row, so ``infer_rls_on_schema``
     gives it the direct-ownership policy: a clinician reads and writes only
     their own. Dismissing something clears it from one person's Inbox, not a
     colleague's.
@@ -2761,7 +2761,7 @@ class WaitlistEntryRow(Base):
     being offered anything; ``no_auto_offer`` means a person decides each
     offer. ``filled_at`` marks an entry whose wait is over.
 
-    It carries ``patient_id``, so ``enable_rls_on_schema`` gives it the
+    It carries ``patient_id``, so ``infer_rls_on_schema`` gives it the
     ``has_patient_access`` policy.
     """
 
@@ -3731,7 +3731,7 @@ class PatientDocumentRow(Base):
     a patient reaching their own chart through the portal gets the documents
     that surface belongs to, not the clinical record behind it.
 
-    See :func:`app.db.enable_rls_on_schema` for the policy body.
+    See :func:`app.db.infer_rls_on_schema` for the policy body.
 
     Lifecycle: ``finalized_at`` is NULL between init (signed URL minted,
     placeholder row inserted) and finalize (GCS object verified, PyMuPDF
@@ -4343,7 +4343,7 @@ class PatientPaymentMethodRow(Base):
     card_exp_year: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     # Which clinician put the card on file. Deliberately NOT named ``user_id``:
-    # ``enable_rls_on_schema`` checks for ``user_id`` BEFORE ``patient_id``, so
+    # ``infer_rls_on_schema`` checks for ``user_id`` BEFORE ``patient_id``, so
     # that name would silently swap the patient-access policy for direct
     # ownership — the clinician who took the payment would be the only one who
     # could ever see the row, and a covering clinician would not. This column
@@ -4760,7 +4760,7 @@ class PayerEnrollmentRow(Base):
     request per payer per transaction, and ``vendor_request_id`` is the
     clearinghouse's own id for it. Practice-level like ``payers`` — the practice
     is enrolled, not a clinician — so no ``user_id`` / ``patient_id`` and no
-    ``id`` either, which keeps the table out of ``enable_rls_on_schema``
+    ``id`` either, which keeps the table out of ``infer_rls_on_schema``
     entirely; its isolation boundary is the tenant schema.
 
     ``requested_by_user_id`` is who asked, and therefore who the reminder is
@@ -5382,7 +5382,7 @@ class ImportRecordRow(Base):
 #     one DEA column in this schema and it lives there.
 #   * Documents stay in ``compliance_documents``. Every table here points at
 #     one by id; none stores bytes.
-#   * Every table carries ``user_id``, so ``enable_rls_on_schema`` gives it
+#   * Every table carries ``user_id``, so ``infer_rls_on_schema`` gives it
 #     the direct-ownership policy — which is why none needs registering as
 #     not-row-scoped. They are row-scoped, on the clinician who owns them.
 #

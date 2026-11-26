@@ -4,12 +4,14 @@
 
 ``register_overlay_owner_scoped(table, owner_column)`` is how a deployment
 says "each row of this table belongs to the user named in this column", for
-a table whose owner column is not ``user_id``. The engine then enables and
-forces row-level security on it with one ``rls_owner_isolation`` policy,
-both when a practice is provisioned (``enable_rls_on_schema``) and on every
-reconcile of a live practice (``fan_out``).
+a table whose owner column is not ``user_id``. The policy planner
+(``infer_rls_on_schema``) then enables and forces row-level security on it
+with one ``rls_owner_isolation`` policy. The planner runs when a tenant
+template is generated, and live practices are made to match the template, so
+these tests run the planner over a practice built the way the regen builds
+its scratch schema (``planner_practice``).
 
-Each test adds a throwaway table to a freshly provisioned practice, the way
+Each test adds a throwaway table to such a practice, the way
 a deployment's own migration would, and registers it for the test's
 duration only. The table carries an ``id`` and a ``varchar`` owner column,
 the common shape for a deployment's per-user table.
@@ -28,8 +30,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from app import db as app_db
-from app.db import OwnerScope, enable_rls_on_schema, register_overlay_owner_scoped
-from app.db.migrate_tenants import fan_out
+from app.db import OwnerScope, infer_rls_on_schema, register_overlay_owner_scoped
 from app.db.rls_state import read_live_rls
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
@@ -55,7 +56,9 @@ _USER_B = "user-b-7d2a4b"
 
 
 def _new_schema(engine: Engine) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from tests_integration.database.planner_practice import (  # noqa: PLC0415
+        build_planner_practice,
+    )
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -64,7 +67,7 @@ def _new_schema(engine: Engine) -> str:
         conn.commit()
 
     schema = f"practice_test_owner_{uuid.uuid4().hex[:8]}"
-    create_practice_schema(engine, schema)
+    build_planner_practice(engine, schema)
     return schema
 
 
@@ -100,10 +103,10 @@ def schema(engine: Engine) -> Iterator[str]:
 
 
 def _reconcile(engine: Engine, schema: str) -> app_db.RlsReconcileCounts:
-    """``enable_rls_on_schema`` as provisioning runs it: strict."""
+    """The planner, strict, as the template regen runs it."""
     with OrmSession(engine) as session:
         session.execute(text(f"SET search_path = {schema}, platform, public"))
-        return enable_rls_on_schema(session, schema)
+        return infer_rls_on_schema(session, schema)
 
 
 def _insert(engine: Engine, schema: str, as_user: str, owner: str | None, body: str) -> None:
@@ -323,12 +326,13 @@ class TestOwnerScoped:
         registry: dict[str, OwnerScope],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """(g) A withdrawn registration leaves no owner policy behind.
+        """(g) A withdrawn registration leaves no owner policy in the next template.
 
         Withdrawn into not-row-scoped, which is the only way a table carrying
         an ``id`` can stop being row-scoped: unregistered outright, it is a
-        table the engine no longer knows, and the reconcile leaves those as it
-        found them (``enable_rls_on_schema``'s ``strict``).
+        table the engine no longer knows, and the planner leaves those as it
+        found them (``infer_rls_on_schema``'s ``strict``). Registrations act
+        when a template is generated, so this is the planner's pass.
         """
         register_overlay_owner_scoped(_TABLE, "owner_user_id")
         _reconcile(engine, schema)
@@ -336,9 +340,8 @@ class TestOwnerScoped:
 
         registry.clear()
         monkeypatch.setattr(app_db, "_OVERLAY_NOT_ROW_SCOPED", {_TABLE})
-        results = fan_out(engine, [schema])
+        _reconcile(engine, schema)
 
-        assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
         # RLS off is the not-row-scoped state; DISABLE leaves the FORCE bit as
         # it was, which means nothing while RLS is off (core's heal is the same).
         assert _flags(engine, schema)[0] is False
@@ -347,7 +350,12 @@ class TestOwnerScoped:
     def test_the_reconcile_heals_a_dropped_or_altered_policy(
         self, engine: Engine, schema: str
     ) -> None:
-        """The fan-out over live practices restores the policy, and verifies it after."""
+        """The planner restores a damaged policy, and verifies it after.
+
+        A live practice is healed by the run-time pass against the templates
+        (covered with the template tests); this is the planner's own verify,
+        which the regen relies on when it builds its scratch practice.
+        """
         register_overlay_owner_scoped(_TABLE, "owner_user_id")
         _reconcile(engine, schema)
         _insert(engine, schema, _USER_A, _USER_A, "a's row")
@@ -359,44 +367,29 @@ class TestOwnerScoped:
             )
         assert _visible(engine, schema, _USER_A) == {"a's row", "b's row"}, "damage reached"
 
-        results = fan_out(engine, [schema])
-        assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
+        assert _reconcile(engine, schema).altered == 1
         assert _visible(engine, schema, _USER_A) == {"a's row"}
 
         with engine.begin() as conn:
             conn.execute(text(f"DROP POLICY rls_owner_isolation ON {schema}.{_TABLE}"))
         assert _visible(engine, schema, _USER_A) == set(), "forced with no policy: deny-all"
 
-        fan_out(engine, [schema])
+        _reconcile(engine, schema)
         assert _policies(engine, schema) == [("rls_owner_isolation", ["public"])]
         assert _visible(engine, schema, _USER_A) == {"a's row"}
         assert _reconcile(engine, schema).altered == 0, "healed state must verify, not rebuild"
 
 
-# Tables whose template fingerprint already differs from what the engine
-# writes on main, before this registry existed, so provisioning rebuilds them
-# on every fresh practice whatever the branch. Seen on Postgres 16.4 and
-# 16.16 alike; tracked as PABLO-2nk0. A policy change to one of
-# these two is invisible to the test below until that drift is fixed and the
-# set is emptied.
-_KNOWN_TEMPLATE_DRIFT = frozenset({"homework_assignments", "patient_documents"})
-
-
 def test_a_registration_changes_no_other_tables_policy(
     engine: Engine, registry: dict[str, OwnerScope], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Provisioning a practice rebuilds no existing table's policy.
+    """Registering a table changes no other table's policy in the planner's output.
 
-    The template carries the fingerprints of the policies as the engine wrote
-    them before this registry existed. Provisioning applies the template and
-    then runs ``enable_rls_on_schema`` over it, and that pass rebuilds every
-    table whose plan no longer matches. So the tables it rebuilds are the
-    tables whose policy text this change touched. They are read off the
-    provisioning pass itself, through ``record_fingerprints``: a second pass
-    afterwards would find everything already rebuilt and prove nothing.
-
-    The registered table is absent from the schema, which the registry
-    allows: it is process-wide.
+    A practice the planner built is planned again with the registration in
+    place. Every table whose plan the registration touched would be rebuilt;
+    they are read off that pass itself, through ``record_fingerprints``. The
+    registered table is absent from the schema, which the registry allows (it
+    is process-wide), so nothing may be rebuilt at all.
     """
     rebuilt: set[str] = set()
     real_record = app_db.record_fingerprints
@@ -405,10 +398,10 @@ def test_a_registration_changes_no_other_tables_policy(
         rebuilt.update(plans)
         real_record(session, schema_name, plans)
 
-    monkeypatch.setattr(app_db, "record_fingerprints", spy)
-    register_overlay_owner_scoped(_TABLE, "owner_user_id")
     name = _new_schema(engine)
     try:
+        monkeypatch.setattr(app_db, "record_fingerprints", spy)
+        register_overlay_owner_scoped(_TABLE, "owner_user_id")
         with OrmSession(engine) as session:
             before = read_live_rls(session, name)
         counts = _reconcile(engine, name)
@@ -419,9 +412,8 @@ def test_a_registration_changes_no_other_tables_policy(
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
             conn.commit()
 
-    assert rebuilt, "the spy never saw the provisioning pass"
-    assert rebuilt - _KNOWN_TEMPLATE_DRIFT == set(), "provisioning rebuilt these policies"
-    assert counts.altered == 0, "a second pass must find the provisioned state verified"
+    assert rebuilt == set(), "the registration rebuilt these tables' policies"
+    assert counts.altered == 0, "a planner-built practice must verify unchanged"
     assert counts.applied > 0
     assert before == after
     assert registry == {_TABLE: OwnerScope("owner_user_id", False)}

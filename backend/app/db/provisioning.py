@@ -139,7 +139,7 @@ def _provision_core_schemas(engine: Engine) -> None:
     The deployment's own practice is conditional, and the condition is the
     point. It used to be that the template WAS the live practice: boot
     registered ``platform.practices`` against ``practice`` itself, and
-    ``enable_rls_on_schema`` returns early on exactly that name, so the live
+    the policy planner returned early on exactly that name, so the live
     database ran with no row policies at all. One practice is the ordinary
     case, not a special one, so it gets a real ``practice_*`` schema with the
     same policies as any other — which is also what lets a patient principal
@@ -371,13 +371,11 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
        silently rebuilt from the ORM.
 
     Row-level security comes from the template too. Its last section
-    (after :data:`TEMPLATE_ROW_SECURITY_MARKER`) is the state
-    ``enable_rls_on_schema`` gives a fresh practice — every table enabled,
-    forced and policied — so a new practice is isolated by the time its
-    template is applied, without the per-table rebuild. That section is
-    applied after the seed rows and the post-provision hooks, the same
-    point the rebuild used to run at, so neither writes under row policies
-    it never had to satisfy.
+    (after :data:`TEMPLATE_ROW_SECURITY_MARKER`) is every table's flags and
+    policies, captured when the template was generated, so a new practice is
+    isolated by the time its template is applied. That section is applied
+    after the seed rows and the post-provision hooks, so neither writes under
+    row policies it never had to satisfy.
 
     The same section carries the practice directory's access: its three read
     policies, and the grants, pinned search paths and function ownership
@@ -385,15 +383,16 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     directory role, so the role is checked first and a missing one fails with
     the fix.
 
-    ``enable_rls_on_schema`` then still runs over every practice schema,
-    fresh or not, as the verify. On a schema the template just built it
-    reads the catalog, finds every table already right and changes
-    nothing; it is also what covers tables the template does not know:
-    those a deployment registered, and those a post-provision hook created.
+    :func:`reconcile_practice_rls` then runs over every practice schema,
+    fresh or not, and makes it match every tenant template's row-level
+    security: the engine's and any a deployment names in
+    ``TENANT_RLS_EXTRA_TEMPLATES``, whose tables a post-provision hook
+    created. It is strict here: a table no template creates means a template
+    is missing from the setting, and the practice is refused rather than
+    handed out with a table that has no row-level security.
 
     The default template schema gets neither: it is the shape practices
-    are cloned from and holds no rows, and ``enable_rls_on_schema`` skips
-    it by name.
+    are cloned from and holds no rows.
     """
     _validate_schema_name(schema_name)
 
@@ -498,19 +497,21 @@ def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
 def reconcile_practice_rls(
     engine: Engine, schema_name: str, *, strict: bool = True
 ) -> RlsReconcileCounts:
-    """Run ``enable_rls_on_schema`` over one practice schema on its own session.
+    """Make one practice schema's row-level security match the templates, and commit.
 
-    The tenant schema goes first on the search path so policy bodies that
-    call ``has_patient_access`` unqualified resolve to its own copy.
-    ``schema_name`` must already be validated.
+    On its own session, through ``rls_runtime.apply_practice_rls``. Strict by
+    default, as provisioning wants it: a schema it just built holds only what
+    the templates create, so any other table means a template is missing from
+    ``TENANT_RLS_EXTRA_TEMPLATES`` and the practice is refused.
     """
     from sqlalchemy.orm import Session as OrmSession
 
-    from . import enable_rls_on_schema
+    from .rls_runtime import apply_practice_rls
 
     with OrmSession(engine) as session:
-        session.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
-        return enable_rls_on_schema(session, schema_name, strict=strict)
+        counts = apply_practice_rls(session, schema_name, strict=strict)
+        session.commit()
+        return counts
 
 
 def _has_alembic_version(engine: Engine, schema_name: str) -> bool:

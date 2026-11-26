@@ -5,7 +5,7 @@
 The tenant template SQL is the **canonical schema for a freshly-provisioned
 tenant**. ``create_practice_schema`` applies this file (with the target
 schema name substituted) instead of the old
-``Base.metadata.create_all + enable_rls_on_schema``
+``Base.metadata.create_all`` plus the run-time policy planner
 pair — that pair silently dropped raw-SQL DDL (functions, triggers,
 custom types) that lived only in alembic migrations, and bug PABLO-API-500
 on the 2026-05-17 pentest was the consequence: fresh tenants were stamped
@@ -39,9 +39,9 @@ This script:
          in a single SQL transaction. No separate ``_stamp_alembic_at_head``
          call is needed.
   5. Captures the row-level security a practice schema gets. The reference
-     ``practice`` schema has none — ``enable_rls_on_schema`` skips it by
+     ``practice`` schema has none — the planner skips it by
      name — so the script provisions a scratch practice schema from the
-     template just captured, runs the real ``enable_rls_on_schema`` over it
+     template just captured, runs the real planner, ``infer_rls_on_schema``, over it
      (the function itself, not a copy of its rules), dumps that schema, and
      keeps only its row-level security: every ``ENABLE`` / ``FORCE ROW
      LEVEL SECURITY`` and every policy the reconcile created, with the
@@ -202,16 +202,21 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from testcontainers.postgres import PostgresContainer
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
+from app.db import PLATFORM_SCHEMA, infer_rls_on_schema
 from app.db.practice_directory import apply_practice_directory_access, directory_access_sql
-from app.db.provisioning import apply_template_sql, reconcile_practice_rls
+from app.db.provisioning import apply_template_sql
 
 url, schema, template_path, access_path, placeholder = sys.argv[1:6]
 engine = create_engine(url)
 try:
     apply_template_sql(engine, schema, Path(template_path).read_text())
-    reconcile_practice_rls(engine, schema)
+    with Session(engine) as session:
+        session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        infer_rls_on_schema(session, schema)
+        session.commit()
     with engine.begin() as conn:
         apply_practice_directory_access(conn, schema)
     Path(access_path).write_text(directory_access_sql(placeholder))
@@ -226,7 +231,7 @@ def _provision_capture_schema(database_url: str, schema_part: str) -> str:
     ``schema_part`` is the template just captured from ``practice``, so the
     scratch schema has exactly the shape a newly provisioned practice has
     before its row-level security — and then gets that row-level security
-    from the real ``enable_rls_on_schema``, and its practice directory access
+    from the real ``infer_rls_on_schema``, and its practice directory access
     from the real ``apply_practice_directory_access``.
 
     Returns ``directory_access_sql`` for the schema placeholder: the part of

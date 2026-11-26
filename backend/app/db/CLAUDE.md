@@ -88,24 +88,29 @@ summary that covers the alembic chains too.
      35 tenant revisions still touch `platform.` for historical reasons.
      Don't add the 36th (`PABLO-k7it`).
 
-   **RLS enforcement** — every per-tenant table that carries a
-   `user_id`, `patient_id`, or `id` column is force-RLS'd by
-   `enable_rls_on_schema`. A newly-added table MUST have a policy
-   branch in the planner it calls (`rls_inference/table.py`, which takes
-   the registries as arguments and reads no module state) or be
-   explicitly listed as not-row-scoped via
-   `register_overlay_not_row_scoped()`, otherwise it silently ships as
-   deny-all.
+   **RLS enforcement** — a practice schema's row-level security is
+   whatever the tenant templates say, and nothing decides it at run time.
+   Each template ends with a row-level security section (after the marker);
+   `rls_runtime.apply_practice_rls` makes a live schema match the sections
+   of every template (the engine's `tenant_template.sql`, then any a
+   deployment names in `TENANT_RLS_EXTRA_TEMPLATES`). It runs at
+   provisioning (strict: a table no template creates refuses the practice),
+   after every migrate, after an archive restore and in the single-practice
+   conversion. `enable_rls_on_schema` does nothing; landed revisions still
+   call it, and the pass after the chain is what sets policies.
 
-   The tenant template carries that function's output: its last section
-   (after the row-level security marker) is captured by running the real
-   `enable_rls_on_schema` over a scratch practice during regen, and
-   provisioning applies it to every new practice. `enable_rls_on_schema`
-   still runs afterwards as a verify — it rebuilds only tables whose flags,
-   policies or policy fingerprints differ, so it stays the repair pass for
-   existing practices. **So a change to a policy in that function is a
-   template change too: regenerate the template in the same commit**, or
-   the `Tenant template matches alembic head` job fails.
+   The section is **generated**: the regen runs the policy planner,
+   `infer_rls_on_schema` (shapes in `rls_inference/`), over a scratch
+   practice and captures what it creates. Only the regen calls the planner.
+   Every per-tenant table that carries a `user_id`, `patient_id`, or `id`
+   column is force-RLS'd by it, so a newly-added table MUST have a policy
+   branch in `rls_inference/table.py` or be listed as not-row-scoped via
+   `register_overlay_not_row_scoped()`, otherwise it ships as deny-all.
+   **So a change to a policy is a template change: regenerate the template
+   in the same commit**, or the `Tenant template matches alembic head` job
+   fails. A deployment that adds tables generates its own template's
+   section the same way, filtered to its tables
+   (`rls_capture.row_security_section(..., tables=...)`).
 
    The same section carries the practice directory's access: its three
    read policies, captured like the rest, and the grants, pinned search

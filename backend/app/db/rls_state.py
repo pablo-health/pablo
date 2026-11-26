@@ -2,7 +2,7 @@
 
 """Read a practice schema's row-level security state, and say whether a table matches.
 
-``enable_rls_on_schema`` decides what every tenant table's row-level security
+``infer_rls_on_schema`` decides what every tenant table's row-level security
 should be. This module is how it finds out what the table already has, so a
 schema that is already right is verified rather than rebuilt.
 

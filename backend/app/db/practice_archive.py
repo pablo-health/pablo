@@ -84,7 +84,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from ..utcnow import utc_now
-from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name, enable_rls_on_schema
+from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
 from .migrate_tenants import _alembic_config_for, _alembic_head
 from .platform_models import SCHEMA_READY
 from .practice_directory import apply_practice_directory_access
@@ -807,22 +807,25 @@ def _upgrade_to_head(engine: Engine, schema_name: str, owner: str, current: str)
 
 
 def _reconcile_rls_as(engine: Engine, schema_name: str, owner: str) -> None:
-    """``enable_rls_on_schema`` as the practice-schema owner, as provisioning runs it.
+    """Make a restored schema's row-level security match the templates, as its owner.
 
-    ``strict=False``, as the deploy-time fan-out runs it over a live schema: a
-    restored schema can hold tables a deployment added that the engine has no
-    registration for, and those keep the policies they were dumped with.
+    The dump carries the policies the practice had when it was archived, which
+    can be older than the templates now. Lenient, as the deploy-time pass is
+    over a live schema: a restored schema can hold tables put there some other
+    way, and those keep the policies they were dumped with.
 
-    ``enable_rls_on_schema`` commits, which would end a ``SET LOCAL ROLE``, so
-    the role is set for the connection and reset before it goes back to the pool.
+    The session commits, which would end a ``SET LOCAL ROLE``, so the role is
+    set for the connection and reset before it goes back to the pool.
     """
+    from .rls_runtime import apply_practice_rls
+
     with engine.connect() as conn:
         conn.execute(text(f"SET ROLE {_ident(owner)}"))
         conn.commit()
         try:
             with Session(bind=conn) as session:
                 session.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
-                enable_rls_on_schema(session, schema_name, strict=False)
+                apply_practice_rls(session, schema_name, strict=False)
                 # The dump keeps neither owners nor grants, so the directory
                 # functions come back owned by whoever restored them and the
                 # directory role holds nothing. Nothing else puts that back.

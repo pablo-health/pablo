@@ -39,8 +39,11 @@ from app.db.practice_archive import (
     restore_practice_schema,
 )
 from app.db.provisioning import _ALEMBIC_INI_PATH, create_practice_schema
+from app.db.rls_apply import tenant_rls_differences
+from app.db.rls_runtime import desired_rls
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -298,6 +301,21 @@ def test_round_trip(admin: Engine, practice: tuple[str, str], store: LocalDirect
     assert _owners(admin, schema) == owners_before
     assert _forced_rls_tables(admin, schema) == forced_before
     assert _catalog(admin, schema) == catalog_before
+
+
+def test_restore_brings_an_older_policy_set_back_to_the_template(
+    admin: Engine, practice: tuple[str, str], store: LocalDirectoryArchive
+) -> None:
+    practice_id, schema = practice
+    with admin.begin() as conn:
+        conn.execute(text(f'DROP POLICY rls_patient_access ON "{schema}".patients'))
+        conn.execute(text(f'CREATE POLICY rls_patient_access ON "{schema}".patients USING (true)'))
+        conn.execute(text(f'DROP POLICY rls_patient_self_read ON "{schema}".patients'))
+        conn.execute(text(f'CREATE POLICY rls_stale_extra ON "{schema}".patients USING (true)'))
+    archive_practice_schema(admin, practice_id, schema, store)
+    restore_practice_schema(admin, practice_id, schema, store)
+    with Session(admin) as s:
+        assert tenant_rls_differences(s, schema, desired_rls()) == {}
 
 
 def test_older_revision_is_migrated_to_head(

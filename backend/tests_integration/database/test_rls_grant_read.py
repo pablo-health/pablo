@@ -202,7 +202,11 @@ class TestGrantReadsSessionsAndAppointments:
     def test_reconcile_rebuilds_a_table_that_still_holds_the_grant_read(
         self, engine: Engine
     ) -> None:
-        """A stale owner policy rebuilds the table with ``rls_grant_read`` still in place."""
+        """A damaged owner policy is rebuilt, and ``rls_grant_read`` still admits the colleague.
+
+        The pass judges a policy by its text, so the owner policy is edited to
+        admit nothing; the comment alone is bookkeeping and changes nothing.
+        """
         with _fresh_schema(engine) as schema:
             owner, colleague = str(uuid.uuid4()), str(uuid.uuid4())
             patient_id = _seed_client_of(engine, schema, owner)
@@ -210,7 +214,7 @@ class TestGrantReadsSessionsAndAppointments:
             with engine.begin() as conn:
                 for table in _GRANT_READ_TABLES:
                     conn.execute(
-                        text(f"COMMENT ON POLICY rls_user_isolation ON {schema}.{table} IS 'stale'")
+                        text(f"ALTER POLICY rls_user_isolation ON {schema}.{table} USING (false)")
                     )
 
             counts = reconcile_tenant_rls(engine, schema)

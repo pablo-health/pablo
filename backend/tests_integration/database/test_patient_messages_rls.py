@@ -871,19 +871,14 @@ def _rebuild_through_the_chain(engine: Engine, schema: str) -> None:
 
 
 def _reapply_policies(engine: Engine, schema: str) -> None:
-    """Re-run the provisioning RLS step, as ``create_practice_schema`` does.
+    """Run the pass every migrate ends with, as the deploy does.
 
-    The chain creates the tables; the policies come from
-    ``enable_rls_on_schema``, which provisioning runs after the template is
-    applied. ``search_path`` must name the schema first, because
-    ``has_patient_access`` lives in it.
+    The chain creates the tables; their policies come from the tenant
+    templates, applied by ``reconcile_tenant_rls`` once the chain is done.
     """
-    from app.db import PLATFORM_SCHEMA, enable_rls_on_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
 
-    with OrmSession(engine) as session:
-        session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-        enable_rls_on_schema(session, schema)
+    reconcile_tenant_rls(engine, schema)
 
 
 @pytest.fixture(scope="module")

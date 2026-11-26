@@ -6,7 +6,7 @@
 Reports two classes of problems:
 
 1. **Unclassified tenant tables** — ORM tables whose column shape would
-   cause ``enable_rls_on_schema`` to raise RuntimeError (the deny-all
+   cause ``infer_rls_on_schema`` to raise RuntimeError (the deny-all
    guard), meaning the table would be force-RLS'd with no policy.
 
 2. **Uncovered RLS-forced tables** — tables returned by
@@ -43,7 +43,7 @@ if str(BACKEND) not in sys.path:
 from app.db import (  # noqa: E402  # isort: skip
     PATIENT_READABLE_TABLES,
     PATIENT_WRITABLE_TABLES,
-    enable_rls_on_schema,
+    infer_rls_on_schema,
     rls_forced_tenant_tables,
 )
 from app.db.models import Base  # noqa: E402  # isort: skip
@@ -115,7 +115,7 @@ def _sql_type(column: object) -> str:
 
 
 def _columns_for_rls(table: object) -> set[str]:
-    """Return the columns enable_rls_on_schema needs to see for this table.
+    """Return the columns infer_rls_on_schema needs to see for this table.
 
     The clinician policy branches switch on ``{user_id, patient_id, id}``,
     but the patient arm also checks that the column a table is registered
@@ -153,7 +153,7 @@ def _find_unclassified() -> list[str]:
         }
         try:
             session = _FakeSession({table_name: cols}, {table_name: types})
-            enable_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
+            infer_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
         except RuntimeError:
             unclassified.append(table_name)
     return sorted(unclassified)
@@ -205,9 +205,9 @@ def main() -> int:
     if unclassified:
         findings.append(
             "rls-coverage-check: FAIL — unclassified tenant tables "
-            "(enable_rls_on_schema has no policy for them):\n"
+            "(infer_rls_on_schema has no policy for them):\n"
             + "".join(f"  - {t}\n" for t in unclassified)
-            + "\nFix: add a policy branch in enable_rls_on_schema "
+            + "\nFix: add a policy branch in infer_rls_on_schema "
             "(backend/app/db/__init__.py) OR call "
             "register_overlay_not_row_scoped() for tables whose isolation "
             "boundary is the tenant schema. See CLAUDE.md guardrail #4."

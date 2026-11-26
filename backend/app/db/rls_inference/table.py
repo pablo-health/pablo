@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 #: Tables whose rows belong to one note and are readable exactly when that
 #: note is — its signed versions, its addenda and what was dictated for it.
-#: ``enable_rls_on_schema`` gives them the ``rls_note_child_access`` policy,
+#: ``infer_rls_on_schema`` gives them the ``rls_note_child_access`` policy,
 #: keyed on ``note_id``.
 NOTE_CHILD_TABLES: frozenset[str] = frozenset(
     {"note_signatures", "note_addenda", "session_dictations"}
@@ -39,7 +39,7 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
 
     The full drop-and-recreate: enable and force RLS, drop every policy name
     this function has ever created, then create the ones the table's shape
-    calls for. ``enable_rls_on_schema`` runs it only when the table does not
+    calls for. ``infer_rls_on_schema`` runs it only when the table does not
     already hold its result. Raises for a table that matches no policy shape.
 
     ``schema_tables`` is every table in the schema, for a policy that reads
@@ -109,7 +109,7 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
     if owner_scope is not None:
         if owner_scope.owner_column not in columns:
             raise RuntimeError(
-                f"enable_rls_on_schema: {qualified} is registered owner-scoped on "
+                f"infer_rls_on_schema: {qualified} is registered owner-scoped on "
                 f"'{owner_scope.owner_column}', but that column is not present "
                 f"(columns found: {sorted(columns)}). Refusing to create a policy "
                 f"that would match nothing — fix the registration or the table."
@@ -497,7 +497,7 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
         # the author must add a policy branch above, or list the
         # table in ``not_row_scoped`` if it isn't row-owned.
         raise RuntimeError(
-            f"enable_rls_on_schema: no RLS policy defined for {qualified} "
+            f"infer_rls_on_schema: no RLS policy defined for {qualified} "
             f"(columns present: {sorted(columns)}). Add a policy branch "
             f"or list the table in ``not_row_scoped`` — refusing to leave "
             f"it deny-all."
