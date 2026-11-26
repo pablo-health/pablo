@@ -47,6 +47,14 @@ def test_the_owner_and_a_practice_admin_may_bill_and_a_clinician_may_not(
     assert not can_bill(PRACTICE, CLINICIAN)
 
 
+def test_a_blank_owner_email_lets_only_the_recorded_owner_bill() -> None:
+    practice = PracticeRow(id="practice-2", owner_email="", owner_user_id=OWNER.id)
+
+    assert can_bill(practice, OWNER)
+    assert not can_bill(practice, CLINICIAN)
+    assert not can_bill(PracticeRow(id="practice-3", owner_email=""), CLINICIAN)
+
+
 def test_the_read_refuses_whoever_may_not_bill_without_touching_the_database() -> None:
     db = MagicMock()
 

@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
+from . import repositories
 from .db.practice_directory import CLAIM_SOURCE_FUNCTION
+from .db.practice_owner import is_recorded_owner
 
 if TYPE_CHECKING:
     from datetime import date, datetime
@@ -31,11 +33,13 @@ if TYPE_CHECKING:
 def can_bill(practice: PracticeRow, user: User) -> bool:
     """Whether ``user`` may build, correct or void a claim for any session in ``practice``.
 
-    Today: the practice owner or a practice admin.
+    Today: the practice owner or a practice admin. A blank ``owner_email``
+    names nobody here, unlike the settings gate, so only the recorded owner counts.
     """
-    from .routes.users import _is_practice_admin  # noqa: PLC0415 — routes import this package
-
-    return _is_practice_admin(practice, user)
+    owner_email = practice.owner_email.strip().lower()
+    if is_recorded_owner(practice, user.id) or (owner_email and owner_email == user.email.lower()):
+        return True
+    return repositories.get_practice_admin_repository().is_admin(user.id)
 
 
 @dataclass(frozen=True)
