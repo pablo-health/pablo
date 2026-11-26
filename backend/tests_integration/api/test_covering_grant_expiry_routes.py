@@ -102,7 +102,7 @@ class _Chart:
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -120,13 +120,13 @@ def _arming_here_stays_here() -> Iterator[None]:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice with both clinicians mapped to it as members."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     # The row policies call ``has_patient_access`` unqualified; see
     # ``test_patients_api_e2e.tenant_schema`` for why the pool is warmed.
@@ -278,8 +278,8 @@ def acting(
     fastapi_app: FastAPI, tenant_schema: str, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[dict[str, str]]:
     """The real route stack, signed in as whichever clinician ``acting["id"]`` names."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -288,8 +288,8 @@ def acting(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.models import User
 
     who = {"id": _AVERY}
 
@@ -344,7 +344,7 @@ def acting(
 @pytest.fixture
 def client(fastapi_app: FastAPI, acting: dict[str, str]) -> TestClient:
     """One client for the whole case: nothing about access may ride on it."""
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from fastapi.testclient import TestClient
 
     return TestClient(fastapi_app)
 
@@ -561,7 +561,7 @@ def _footprint(engine: Engine, schema: str, clients: _Clients) -> dict[str, Any]
 
 @pytest.mark.parametrize("expiry", list(_EXPIRIES))
 @pytest.mark.parametrize("route_name", list(_ROUTES))
-def test_blakes_next_request_after_the_grant_expires_is_a_404(  # noqa: PLR0913 — fixtures
+def test_blakes_next_request_after_the_grant_expires_is_a_404(
     route_name: str,
     expiry: str,
     client: TestClient,

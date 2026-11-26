@@ -79,7 +79,7 @@ def _drop_schema(engine: Engine, schema: str) -> None:
 
 
 def _provision(engine: Engine, label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = _new_schema(label)
     create_practice_schema(engine, schema)
@@ -88,14 +88,14 @@ def _provision(engine: Engine, label: str) -> str:
 
 def _reconcile(engine: Engine, schema: str) -> Any:
     """The run-time pass over a live practice: make it match the templates."""
-    from app.db.provisioning import reconcile_practice_rls  # noqa: PLC0415
+    from app.db.provisioning import reconcile_practice_rls
 
     return reconcile_practice_rls(engine, schema)
 
 
 def _state(engine: Engine, schema: str) -> tuple[set[tuple[Any, ...]], set[tuple[Any, ...]]]:
     """Every table's RLS flags and every policy, with the schema name taken out."""
-    from app.db.rls_state import schema_neutral  # noqa: PLC0415
+    from app.db.rls_state import schema_neutral
 
     def neutral(value: Any) -> Any:
         return schema_neutral(value, schema) if isinstance(value, str) else value
@@ -127,13 +127,13 @@ def rebuilt(engine: Engine) -> Iterator[tuple[str, Any]]:
     The rebuild is the two things the template's capture runs: the reconcile,
     then the practice directory's access, which the reconcile does not manage.
     """
-    from app.db.practice_directory import apply_practice_directory_access  # noqa: PLC0415
-    from app.db.provisioning import (  # noqa: PLC0415
+    from app.db.practice_directory import apply_practice_directory_access
+    from app.db.provisioning import (
         _apply_tenant_template,
         _stamp_alembic_at_head,
     )
 
-    from tests_integration.database.planner_practice import run_planner  # noqa: PLC0415
+    from tests_integration.database.planner_practice import run_planner
 
     schema = _new_schema("rls_rebuilt")
     _apply_tenant_template(engine, schema)
@@ -175,9 +175,9 @@ def test_the_template_carries_what_a_full_rebuild_produces(
     different, equivalent form than what the planner's text creates, and the
     pass recognises both (see ``rls_apply``, "How a difference is found").
     """
-    from app.db.rls_apply import tenant_rls_differences  # noqa: PLC0415
-    from app.db.rls_runtime import desired_rls  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.rls_apply import tenant_rls_differences
+    from app.db.rls_runtime import desired_rls
+    from sqlalchemy.orm import Session as OrmSession
 
     rebuilt_schema, counts = rebuilt
     template_flags, template_policies = _state(engine, provisioned)
@@ -283,7 +283,7 @@ def test_a_practice_provisioned_before_the_switch_is_left_exactly_as_it_was(
     what the ``rebuilt`` practice holds. The pass the migrate now ends with must
     find it already matching the template, and change nothing at all.
     """
-    from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
+    from app.db.migrate_tenants import reconcile_tenant_rls
 
     schema, _ = rebuilt
     before = _state(engine, schema)

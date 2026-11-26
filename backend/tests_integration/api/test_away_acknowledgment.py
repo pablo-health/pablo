@@ -66,8 +66,8 @@ _COLLEAGUE_EMAIL = "away-ack-colleague@example.com"
 _CLINICIAN_NAME = "Robin Avery"
 _COLLEAGUE_NAME = "Sam Okafor"
 
-_TOKEN_A = "away-ack-client-a"  # noqa: S105 - test credential
-_TOKEN_B = "away-ack-client-b"  # noqa: S105 - test credential
+_TOKEN_A = "away-ack-client-a"
+_TOKEN_B = "away-ack-client-b"
 
 #: Noon UTC is the same calendar day in the clinician's default zone.
 _DAY = date(2026, 3, 10)
@@ -86,13 +86,13 @@ class _Seed:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice with two clinicians, both mapped to it as members."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -176,7 +176,7 @@ def periods(engine: Engine, tenant_schema: str) -> Iterator[None]:
         conn.execute(text("DELETE FROM clinician_away_periods"))
 
 
-def _period(  # noqa: PLR0913 — one row, every column a test may vary
+def _period(
     engine: Engine,
     schema: str,
     *,
@@ -237,7 +237,7 @@ def _thread(engine: Engine, schema: str, patient_id: str) -> str:
 
 def _as_client(schema: str, patient_id: str) -> Session:
     """A session armed the way ``get_patient_context`` arms a portal request."""
-    from app.db import arm_current_patient_id, create_standalone_session  # noqa: PLC0415
+    from app.db import arm_current_patient_id, create_standalone_session
 
     session = create_standalone_session(schema)
     arm_current_patient_id(session, patient_id)
@@ -246,7 +246,7 @@ def _as_client(schema: str, patient_id: str) -> Session:
 
 def _acknowledge(schema: str, patient_id: str, thread_id: str, now: datetime = _NOON) -> str | None:
     """Run the acknowledgment as the client; the sent body, or ``None``."""
-    from app.away.service import PortalAwayAcknowledger  # noqa: PLC0415
+    from app.away.service import PortalAwayAcknowledger
 
     session = _as_client(schema, patient_id)
     try:
@@ -260,7 +260,7 @@ def _acknowledge(schema: str, patient_id: str, thread_id: str, now: datetime = _
 
 
 def _refill(schema: str, patient_id: str, now: datetime = _NOON) -> str | None:
-    from app.away.service import PortalAwayAcknowledger  # noqa: PLC0415
+    from app.away.service import PortalAwayAcknowledger
 
     session = _as_client(schema, patient_id)
     try:
@@ -328,7 +328,7 @@ class TestPortalAcknowledgment:
     def test_the_body_is_the_reviewed_text_and_the_safety_lines_and_nothing_else(
         self, engine: Engine, tenant_schema: str, seed: _Seed
     ) -> None:
-        from app.away.text import SAFETY_LINES  # noqa: PLC0415
+        from app.away.text import SAFETY_LINES
 
         _period(engine, tenant_schema, start=_DAY, end=_DAY + timedelta(days=5))
         body = _acknowledge(
@@ -354,7 +354,7 @@ class TestPortalAcknowledgment:
             pytest.param(f"{_REVIEWED} {_COVER_SENTENCE}", id="saved-with-the-sentence"),
         ],
     )
-    def test_the_colleague_is_named_only_while_they_have_accepted(  # noqa: PLR0913
+    def test_the_colleague_is_named_only_while_they_have_accepted(
         self,
         engine: Engine,
         tenant_schema: str,
@@ -363,7 +363,7 @@ class TestPortalAcknowledgment:
         named: bool,
         stored: str,
     ) -> None:
-        from app.away.text import SAFETY_LINES  # noqa: PLC0415
+        from app.away.text import SAFETY_LINES
 
         _period(
             engine,
@@ -417,7 +417,7 @@ class TestPortalAcknowledgment:
             pytest.param(-1, 5, False, False, id="turned-off"),
         ],
     )
-    def test_nothing_is_sent_outside_the_period_or_when_off(  # noqa: PLR0913
+    def test_nothing_is_sent_outside_the_period_or_when_off(
         self,
         engine: Engine,
         tenant_schema: str,
@@ -534,15 +534,15 @@ def client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
     """The real route stack: the clinician's routes, and two clients' portal routes."""
-    from app.auth.patient_context import (  # noqa: PLC0415
+    from app.auth.patient_context import (
         AuthStrength,
         PatientContext,
         PatientCredential,
         PatientResolverRegistry,
         get_patient_resolver_registry,
     )
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -551,12 +551,12 @@ def client(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
-    from app.portal import module_gate  # noqa: PLC0415
-    from app.portal.portal_settings import NOT_OFFERED  # noqa: PLC0415
-    from app.rate_limit import reset_patient_message_send_limiter  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.models import User
+    from app.portal import module_gate
+    from app.portal.portal_settings import NOT_OFFERED
+    from app.rate_limit import reset_patient_message_send_limiter
+    from fastapi.testclient import TestClient
 
     user = User(
         id=_CLINICIAN,

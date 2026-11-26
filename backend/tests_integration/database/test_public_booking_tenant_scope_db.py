@@ -399,7 +399,7 @@ class TestSchemaRouting:
         ).scalar()
         assert armed == _OWNER_A
 
-    def test_null_practice_schema_is_not_found(self, pg_session):  # noqa: ARG002 — fixture arms the request session
+    def test_null_practice_schema_is_not_found(self, pg_session):
         link_repo = get_booking_link_repository()
         user_repo = get_user_repository()
 
@@ -437,7 +437,7 @@ class TestFreeSlotsScoping:
     appointments table, not from a booking with the same wall-clock time
     sitting in a different tenant's schema."""
 
-    def test_free_slots_ignore_other_tenants_appointment(self, engine, pg_session):  # noqa: ARG002 — fixture arms the request session
+    def test_free_slots_ignore_other_tenants_appointment(self, engine, pg_session):
         collision_start = datetime.combine(
             _BOOKING_DATE, datetime.min.time(), tzinfo=UTC
         ) + timedelta(hours=9)

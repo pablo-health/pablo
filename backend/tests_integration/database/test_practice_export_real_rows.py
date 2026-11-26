@@ -58,7 +58,7 @@ _HIDDEN_SURNAME = "HIDDENCLIENTSENTINEL"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -79,9 +79,9 @@ def _storage_root(tenant_schema: str) -> Path:
 @pytest.fixture(scope="module")
 def clients(engine: Engine, tenant_schema: str) -> dict[str, str]:
     """Three charts: two the admin may open, one that is the other clinician's alone."""
-    from app.models import User, UserPreferences  # noqa: PLC0415
-    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
-    from app.services.practice_billing_profile import update_billing_profile  # noqa: PLC0415
+    from app.models import User, UserPreferences
+    from app.repositories.postgres.user import PostgresUserRepository
+    from app.services.practice_billing_profile import update_billing_profile
 
     ids = {"mine:a": str(uuid.uuid4()), "mine:b": str(uuid.uuid4()), "theirs": str(uuid.uuid4())}
     with engine.begin() as conn:
@@ -141,13 +141,13 @@ def _arm(conn: Any, user_id: str) -> None:
 
 
 def _open_session(engine: Engine, tenant_schema: str, user_id: str) -> tuple[Session, tuple]:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     tokens = (
         _current_tenant_schema.set(tenant_schema),
@@ -161,7 +161,7 @@ def _open_session(engine: Engine, tenant_schema: str, user_id: str) -> tuple[Ses
 
 
 def _close_session(session: Session, tokens: tuple) -> None:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -177,14 +177,14 @@ def _practice_archive(
     engine: Engine, tenant_schema: str, user_id: str, **options: bool
 ) -> tuple[dict[str, bytes], Any]:
     """The practice archive built as ``user_id``, the way the route builds it."""
-    from app.models.export import ExportOptions  # noqa: PLC0415
-    from app.repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
-    from app.routes.admin import _every_patient  # noqa: PLC0415
-    from app.services.practice_export_service import (  # noqa: PLC0415
+    from app.models.export import ExportOptions
+    from app.repositories.postgres.patient import PostgresPatientRepository
+    from app.routes.admin import _every_patient
+    from app.services.practice_export_service import (
         PracticeExportState,
         stream_practice_archive,
     )
-    from app.services.tenant_export_service import audit_log_csv  # noqa: PLC0415
+    from app.services.tenant_export_service import audit_log_csv
 
     session, tokens = _open_session(engine, tenant_schema, user_id)
     try:

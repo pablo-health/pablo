@@ -123,7 +123,7 @@ def test_a_change_to_the_planned_policies_does_not_match() -> None:
     )
     assert table_matches(_SCHEMA, table, before, live)
 
-    from app.db import PATIENT_READABLE_TABLES  # noqa: PLC0415
+    from app.db import PATIENT_READABLE_TABLES
 
     register_overlay_patient_scoped(table)
     try:

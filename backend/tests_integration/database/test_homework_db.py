@@ -72,7 +72,7 @@ _SOAP_PLAN = {
 @pytest.fixture(scope="module", autouse=True)
 def _builtin_note_types() -> None:
     """The built-in types, registered as the app does at startup."""
-    from app.notes import get_default_registry, register_builtin_note_types  # noqa: PLC0415
+    from app.notes import get_default_registry, register_builtin_note_types
 
     registry = get_default_registry()
     if not registry.has("soap"):
@@ -81,7 +81,7 @@ def _builtin_note_types() -> None:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -137,7 +137,7 @@ def _new_patient(engine: Engine, schema: str) -> str:
     return patient_id
 
 
-def _note(  # noqa: PLR0913 — one keyword per column the proof depends on
+def _note(
     engine: Engine,
     schema: str,
     patient_id: str,
@@ -178,9 +178,9 @@ def _note(  # noqa: PLR0913 — one keyword per column the proof depends on
 
 @contextmanager
 def _clinician_service(schema: str, user_id: str = _TREATING) -> Iterator[HomeworkService]:
-    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
-    from app.homework.repository import HomeworkRepository  # noqa: PLC0415
-    from app.homework.service import HomeworkService  # noqa: PLC0415
+    from app.db.tenant_session import tenant_db_session
+    from app.homework.repository import HomeworkRepository
+    from app.homework.service import HomeworkService
 
     with tenant_db_session(schema, user_id) as session:
         yield HomeworkService(HomeworkRepository(session))
@@ -190,10 +190,10 @@ def _suggest(
     schema: str, note_id: str, patient_id: str, note_type: str, content: dict[str, Any]
 ) -> None:
     """The note's homework brought up to date, as the chart-update step does after a save."""
-    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
-    from app.homework.proposals import refresh_homework  # noqa: PLC0415
-    from app.notes import get_default_registry  # noqa: PLC0415
-    from app.repositories.postgres.chart_proposals import (  # noqa: PLC0415
+    from app.db.tenant_session import tenant_db_session
+    from app.homework.proposals import refresh_homework
+    from app.notes import get_default_registry
+    from app.repositories.postgres.chart_proposals import (
         PostgresChartProposalRepository,
     )
 
@@ -208,8 +208,8 @@ def _suggest(
 
 def _suggestions(schema: str, note_id: str, user_id: str = _TREATING) -> list[Any]:
     """The note's homework chart proposals, as the chart-updates review lists them."""
-    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
-    from app.repositories.postgres.chart_proposals import (  # noqa: PLC0415
+    from app.db.tenant_session import tenant_db_session
+    from app.repositories.postgres.chart_proposals import (
         PostgresChartProposalRepository,
     )
 
@@ -218,7 +218,7 @@ def _suggestions(schema: str, note_id: str, user_id: str = _TREATING) -> list[An
         return sorted((p for p in listed if p.field_key == "homework"), key=lambda p: p.item_key)
 
 
-def _decide(  # noqa: PLR0913 — the note, client, suggestion and decision a review sends
+def _decide(
     schema: str,
     note_id: str,
     patient_id: str,
@@ -227,11 +227,11 @@ def _decide(  # noqa: PLR0913 — the note, client, suggestion and decision a re
     text: str | None = None,
 ) -> Any:
     """Decide one suggestion through the chart-proposal service, as the sign-time review does."""
-    from app.chart_proposals.families import ChartWriters  # noqa: PLC0415
-    from app.chart_proposals.service import ChartProposalService, Choice  # noqa: PLC0415
-    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
-    from app.homework.repository import HomeworkRepository  # noqa: PLC0415
-    from app.repositories.postgres.chart_proposals import (  # noqa: PLC0415
+    from app.chart_proposals.families import ChartWriters
+    from app.chart_proposals.service import ChartProposalService, Choice
+    from app.db.tenant_session import tenant_db_session
+    from app.homework.repository import HomeworkRepository
+    from app.repositories.postgres.chart_proposals import (
         PostgresChartProposalRepository,
     )
 
@@ -255,14 +255,14 @@ def _decide(  # noqa: PLR0913 — the note, client, suggestion and decision a re
 @contextmanager
 def _patient_service(engine: Engine, schema: str, patient_id: str) -> Iterator[HomeworkService]:
     """The service on an ORM session armed for a patient principal (as the refill suite does)."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
         arm_current_patient_id,
     )
-    from app.homework.repository import HomeworkRepository  # noqa: PLC0415
-    from app.homework.service import HomeworkService  # noqa: PLC0415
+    from app.homework.repository import HomeworkRepository
+    from app.homework.service import HomeworkService
 
     schema_token = _current_tenant_schema.set(schema)
     user_token = _current_user_id.set(None)
@@ -324,7 +324,7 @@ class TestTableShipped:
         assert row["policies"] >= 1
 
     def test_template_columns_match_the_model(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.models import HomeworkAssignmentRow  # noqa: PLC0415
+        from app.db.models import HomeworkAssignmentRow
 
         with engine.connect() as conn:
             columns = set(
@@ -373,7 +373,7 @@ class TestAcceptingASuggestion:
     def test_accept_edit_and_dismiss_go_through_the_chart_update_review(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.chart_proposals.service import ProposalDecidedError  # noqa: PLC0415
+        from app.chart_proposals.service import ProposalDecidedError
 
         patient = _new_patient(engine, tenant_schema)
         note = _soap_note(engine, tenant_schema, patient)
@@ -462,7 +462,7 @@ class TestClient:
     def test_marks_done_with_a_note_and_back_and_never_reaches_a_withdrawn_one(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.homework.service import (  # noqa: PLC0415
+        from app.homework.service import (
             HomeworkDecisionError,
             HomeworkNotFoundError,
         )

@@ -252,7 +252,7 @@ def _classify(
 
 @pytest.fixture(scope="module")
 def fresh_practice(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = f"practice_rls_proof_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
@@ -303,7 +303,7 @@ def _in_fresh_context[T](fn: Callable[[], T]) -> T:
 def _session_as(
     engine: Engine, schema: str, *, user: str | None = None, patient: str | None = None
 ) -> Session:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         arm_current_patient_id,
         arm_current_user_id,
         set_tenant_schema,
@@ -361,8 +361,8 @@ def _seed_owned(
 
 @pytest.fixture(scope="module")
 def world(engine: Engine) -> Iterator[World]:
-    from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db import PLATFORM_SCHEMA
+    from app.db.provisioning import create_practice_schema
 
     p1 = f"practice_rls_one_{uuid.uuid4().hex[:8]}"
     p2 = f"practice_rls_two_{uuid.uuid4().hex[:8]}"
@@ -532,7 +532,7 @@ class TestCoverage:
     def test_every_practice_table_is_accounted_for(
         self, engine: Engine, fresh_practice: str, which: str
     ) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             DEFAULT_PRACTICE_OWN_SCHEMA,
             not_row_scoped_tenant_tables,
         )
@@ -555,7 +555,7 @@ class TestCoverage:
         assert not stale, f"exemptions for tables that no longer exist: {stale}"
 
     def test_every_platform_table_is_accounted_for(self, engine: Engine) -> None:
-        from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+        from app.db import PLATFORM_SCHEMA
 
         with engine.connect() as conn:
             states = _table_states(conn, PLATFORM_SCHEMA)
@@ -579,7 +579,7 @@ class TestCoverage:
 
 class TestEnforcement:
     def test_every_row_scoped_table_was_seeded(self, engine: Engine, world: World) -> None:
-        from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+        from app.db import PLATFORM_SCHEMA
 
         counts = []
         for schema in (world.p1, PLATFORM_SCHEMA):
@@ -663,7 +663,7 @@ class TestMidRequestCommit:
     def test_release_then_query_is_the_same_principal(
         self, world: World, context_vars_survive: bool
     ) -> None:
-        from app import db  # noqa: PLC0415
+        from app import db
 
         def request() -> list[tuple[str, str, set[str]]]:
             session = db.get_session_factory()()
@@ -699,7 +699,7 @@ class TestNestedPool:
     """A standalone session opened mid-request carries the request's principal and practice."""
 
     def test_standalone_session_while_holding_carries_principal(self, world: World) -> None:
-        from app import db  # noqa: PLC0415
+        from app import db
 
         def request() -> tuple[bool, tuple[str, str], set[str]]:
             session = db.get_session_factory()()
@@ -732,7 +732,7 @@ class TestNestedPool:
 
     def test_standalone_session_without_context_sees_nothing(self, world: World) -> None:
         """Where the ContextVars are empty (a sync route's other thread), it fails closed."""
-        from app import db  # noqa: PLC0415
+        from app import db
 
         def request() -> tuple[str | None, set[str]]:
             session = db.get_session_factory()()

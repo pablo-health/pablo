@@ -47,7 +47,7 @@ _STRANGER_CLINICIAN = "b1d0f47e-2c95-5a83-9e61-4f07a2c8d316"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -126,15 +126,15 @@ def patient_with_two_submissions(engine: Engine, tenant_schema: str) -> str:
 
 def _repo_as(engine: Engine, schema: str, user_id: str):  # type: ignore[no-untyped-def]
     """The real repository on a session armed for *user_id*, as a request arms it."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.patient_intake_submission import (  # noqa: PLC0415
+    from app.repositories.postgres.patient_intake_submission import (
         PostgresPatientIntakeSubmissionRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(schema)
     uid_token = _current_user_id.set(user_id)
@@ -146,7 +146,7 @@ def _repo_as(engine: Engine, schema: str, user_id: str):  # type: ignore[no-unty
 
 
 def _close(session, schema_token, uid_token) -> None:  # type: ignore[no-untyped-def]
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)
@@ -205,8 +205,8 @@ class TestClinicianRead:
         selects the rows outright on a stranger-armed session, so the answer
         can only come from the policy.
         """
-        from app.db import arm_current_user_id  # noqa: PLC0415
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from app.db import arm_current_user_id
+        from sqlalchemy.orm import Session as OrmSession
 
         query = text(
             "SELECT id FROM patient_intake_submissions WHERE patient_id = CAST(:p AS uuid)"

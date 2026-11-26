@@ -58,7 +58,7 @@ _CLINICIAN_B = "d47a2c19-8f3e-5b06-9c21-5e8b7f4a1d63"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -167,8 +167,8 @@ def _export_as_admin(
     falling back to the ambient ContextVar, so a clinician left there by an
     earlier module would replace A and the export would come back empty.
     """
-    from app.db import arm_current_user_id  # noqa: PLC0415
-    from app.services.tenant_export_service import (  # noqa: PLC0415
+    from app.db import arm_current_user_id
+    from app.services.tenant_export_service import (
         TenantExportState,
         stream_tenant_archive,
     )

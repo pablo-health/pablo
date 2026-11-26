@@ -71,7 +71,7 @@ _PARENT_REVISION = "d3b71f0c85a4"
 
 
 def _new_schema(engine: Engine, label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -534,7 +534,7 @@ def _rebuild_through_the_chain(engine: Engine, schema: str) -> None:
     This is how an existing practice gets them: not from the template but
     from the revision, replayed here over a schema that does not have them.
     """
-    from app.db.migrate_tenants import upgrade_tenant_schema  # noqa: PLC0415
+    from app.db.migrate_tenants import upgrade_tenant_schema
 
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -555,7 +555,7 @@ def _reapply_policies(engine: Engine, schema: str) -> None:
     The chain creates the tables; their policies come from the tenant
     templates, applied by ``reconcile_tenant_rls`` once the chain is done.
     """
-    from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
+    from app.db.migrate_tenants import reconcile_tenant_rls
 
     reconcile_tenant_rls(engine, schema)
 
@@ -616,11 +616,11 @@ def test_an_invitation_in_flight_redeems_after_the_migration(engine: Engine) -> 
     """A row written when the code went out with the invitation — a hash, no
     code window — crosses the migration and still redeems, on the
     invitation's own expiry."""
-    from app.db.migrate_tenants import upgrade_tenant_schema  # noqa: PLC0415
-    from app.portal import tokens  # noqa: PLC0415
-    from app.portal.delivery import FakeSmsGateway  # noqa: PLC0415
-    from app.portal.otp import hash_otp  # noqa: PLC0415
-    from app.portal.service import PortalAuthConfig, PortalAuthService  # noqa: PLC0415
+    from app.db.migrate_tenants import upgrade_tenant_schema
+    from app.portal import tokens
+    from app.portal.delivery import FakeSmsGateway
+    from app.portal.otp import hash_otp
+    from app.portal.service import PortalAuthConfig, PortalAuthService
 
     key = "migration-test-signing-key-not-a-real-secret"
     schema = _new_schema(engine, "portal_in_flight")

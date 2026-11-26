@@ -25,9 +25,9 @@ if TYPE_CHECKING:
 
 @pytest.fixture(scope="module")
 def desired() -> dict[str, DesiredTable]:
-    from app.db.rls_apply import desired_from_sql  # noqa: PLC0415
+    from app.db.rls_apply import desired_from_sql
 
-    from .helpers import _TEMPLATE  # noqa: PLC0415
+    from .helpers import _TEMPLATE
 
     return desired_from_sql(_TEMPLATE.read_text())
 
@@ -35,7 +35,7 @@ def desired() -> dict[str, DesiredTable]:
 @pytest.fixture(scope="module")
 def reference(engine: Engine) -> Iterator[str]:
     """A practice provisioned today and never touched: the state to return to."""
-    from .helpers import _drop_schema, _new_schema  # noqa: PLC0415
+    from .helpers import _drop_schema, _new_schema
 
     schema = _new_schema(engine, "apply_fresh")
     yield schema
@@ -51,12 +51,12 @@ def from_the_file(engine: Engine) -> Iterator[str]:
     (see ``rls_apply``'s docstring), which is why this, and not ``reference``,
     is what a schema rebuilt by the applier is compared with.
     """
-    from app.db.provisioning import (  # noqa: PLC0415
+    from app.db.provisioning import (
         TEMPLATE_ROW_SECURITY_MARKER,
         apply_template_sql,
     )
 
-    from .helpers import _TEMPLATE, _drop_schema  # noqa: PLC0415
+    from .helpers import _TEMPLATE, _drop_schema
 
     schema = f"practice_test_apply_file_{uuid.uuid4().hex[:8]}"
     body, _, row_security = _TEMPLATE.read_text().partition(TEMPLATE_ROW_SECURITY_MARKER)
@@ -72,7 +72,7 @@ def practice(engine: Engine) -> Iterator[str]:
 
     Function-scoped: every test damages its schema.
     """
-    from .helpers import _TREATING, _drop_schema, _new_schema  # noqa: PLC0415
+    from .helpers import _TREATING, _drop_schema, _new_schema
 
     schema = _new_schema(engine, "apply")
     with engine.begin() as conn:
@@ -108,13 +108,13 @@ def settled(engine: Engine, desired: dict[str, DesiredTable]) -> Iterator[tuple[
     Built from the file, not provisioned, so that a policy put back from the
     file reads the same as the one that was there before.
     """
-    from app.db.provisioning import (  # noqa: PLC0415
+    from app.db.provisioning import (
         TEMPLATE_ROW_SECURITY_MARKER,
         apply_template_sql,
     )
-    from app.db.rls_state import read_live_rls  # noqa: PLC0415
+    from app.db.rls_state import read_live_rls
 
-    from .helpers import _TEMPLATE, _apply, _drop_schema  # noqa: PLC0415
+    from .helpers import _TEMPLATE, _apply, _drop_schema
 
     schema = f"practice_test_apply_all_{uuid.uuid4().hex[:8]}"
     body, _, row_security = _TEMPLATE.read_text().partition(TEMPLATE_ROW_SECURITY_MARKER)

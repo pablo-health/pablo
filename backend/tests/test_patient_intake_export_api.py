@@ -276,7 +276,7 @@ def measures() -> OutcomeMeasureService:
 
 @pytest.fixture
 def published_version(packets: InMemoryIntakePacketRepository) -> str:
-    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller, in a fixture
+    from app.intake.items import ItemDraft
 
     service = IntakePacketService(packets)
     template = service.create_template("Intake", _CLINICIAN)

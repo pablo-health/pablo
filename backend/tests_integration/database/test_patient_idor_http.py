@@ -81,14 +81,14 @@ _CLINICIAN = "2a7e4c19-5f83-4d6b-8c02-9e1a7b3f5d84"
 # Credential -> patient. Two real patients in ONE tenant, which is the
 # case tenant-schema isolation cannot help with: same schema, same
 # search_path, same connection pool. Only the row policy separates them.
-_TOKEN_A = "credential-belonging-to-patient-a"  # noqa: S105 - test credential
-_TOKEN_B = "credential-belonging-to-patient-b"  # noqa: S105 - test credential
+_TOKEN_A = "credential-belonging-to-patient-a"
+_TOKEN_B = "credential-belonging-to-patient-b"
 
 
 @pytest.fixture(scope="module")
 def tenant(engine: Engine) -> Iterator[tuple[str, str, str]]:
     """A real provisioned schema with two real patients. Returns (schema, a, b)."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))

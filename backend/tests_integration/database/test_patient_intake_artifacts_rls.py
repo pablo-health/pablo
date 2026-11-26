@@ -71,7 +71,7 @@ _PARENT_REVISION = "d2a70f6c913b"
 
 
 def _new_schema(engine: Engine, label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -223,7 +223,7 @@ def documents(engine: Engine, tenant_schema: str, two_patients: tuple[str, str])
 
 
 @pytest.fixture(scope="module")
-def artifacts(  # noqa: PLR0913 — one fixture per table the row points at
+def artifacts(
     engine: Engine,
     tenant_schema: str,
     two_patients: tuple[str, str],
@@ -329,7 +329,7 @@ def _upload(conn: Connection, patient_id: str, document_id: str | None = None) -
     return document_id
 
 
-def _attach(  # noqa: PLR0913 — one keyword per column the caller varies
+def _attach(
     conn: Connection,
     patient_id: str,
     assignment_id: str,
@@ -686,7 +686,7 @@ class TestIntegrityConstraints:
         finally:
             conn.close()
 
-    def test_one_file_answers_one_question(  # noqa: PLR0913 — one fixture per table
+    def test_one_file_answers_one_question(
         self,
         engine: Engine,
         tenant_schema: str,
@@ -888,7 +888,7 @@ def _rebuild_through_the_chain(engine: Engine, schema: str) -> None:
     This is how an existing tenant gets them: not from the template but
     from the revision, replayed here over a schema that does not have them.
     """
-    from app.db.migrate_tenants import upgrade_tenant_schema  # noqa: PLC0415
+    from app.db.migrate_tenants import upgrade_tenant_schema
 
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -909,7 +909,7 @@ def _reapply_policies(engine: Engine, schema: str) -> None:
     The chain creates the tables; their policies come from the tenant
     templates, applied by ``reconcile_tenant_rls`` once the chain is done.
     """
-    from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
+    from app.db.migrate_tenants import reconcile_tenant_rls
 
     reconcile_tenant_rls(engine, schema)
 

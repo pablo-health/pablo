@@ -29,7 +29,7 @@ def _config(engine: Engine, schema: str) -> list[str] | None:
 
 def _walk(engine: Engine, schema: str, direction: str, target: str) -> None:
     """Move one tenant schema along its chain, as the migrate fan-out does."""
-    from app.db.migrate_tenants import _alembic_config_for  # noqa: PLC0415
+    from app.db.migrate_tenants import _alembic_config_for
 
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))

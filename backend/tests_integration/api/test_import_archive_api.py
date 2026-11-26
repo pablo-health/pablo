@@ -64,7 +64,7 @@ LULU, PABLO_A, PABLO = "112092152", "112092194", "112093920"
 @pytest.fixture
 def schema(engine: Engine) -> Iterator[str]:
     """A fresh practice per test: each journey starts from an empty chart."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -91,7 +91,7 @@ def schema(engine: Engine) -> Iterator[str]:
 
 @pytest.fixture
 def client(schema: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[TestClient]:
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -100,10 +100,10 @@ def client(schema: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iter
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.main import app  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.main import app
+    from app.models import User
+    from fastapi.testclient import TestClient
 
     user = User(
         id=_USER,

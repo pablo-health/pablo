@@ -168,7 +168,7 @@ def signatures_repo() -> InMemoryPatientIntakeSignatureRepository:
 
 @pytest.fixture
 def published_version(packets: InMemoryIntakePacketRepository) -> str:
-    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller, in a fixture
+    from app.intake.items import ItemDraft
 
     service = IntakePacketService(packets)
     template = service.create_template("Intake", _CLINICIAN)
@@ -627,7 +627,7 @@ class TestAccept:
 def details_version(packets: InMemoryIntakePacketRepository) -> str:
     """A published form asking what brings the client in, then the "About you"
     starter's questions, each marked with the chart field it fills."""
-    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller, in a fixture
+    from app.intake.items import ItemDraft
 
     packet_service = IntakePacketService(packets)
     template = packet_service.create_template("Details", _CLINICIAN)
@@ -1153,7 +1153,7 @@ class TestReviewView:
 
 def _measure_version(packets: InMemoryIntakePacketRepository) -> str:
     """A published form asking the PHQ-9 and then the GAD-7."""
-    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller
+    from app.intake.items import ItemDraft
 
     service = IntakePacketService(packets)
     template = service.create_template("Screeners", _CLINICIAN)
@@ -1179,7 +1179,7 @@ class TestReviewWording:
         service: IntakeAssignmentService,
         packets: InMemoryIntakePacketRepository,
     ) -> None:
-        from app.outcome_measures.item_text import (  # noqa: PLC0415 — one caller
+        from app.outcome_measures.item_text import (
             FREQUENCY_OPTIONS,
             FREQUENCY_PROMPT,
             ITEM_TEXT,
@@ -1309,8 +1309,8 @@ def _wire_portal_address(monkeypatch: pytest.MonkeyPatch) -> None:
     standing up a practice: what is under test here is which payload is
     sent, not how a practice gets an address.
     """
-    from app.portal import notices as notices_module  # noqa: PLC0415 — test-local seam
-    from app.portal.practice_routes import PracticeAddress  # noqa: PLC0415
+    from app.portal import notices as notices_module
+    from app.portal.practice_routes import PracticeAddress
 
     monkeypatch.setattr(
         notices_module, "_resolve_practice", lambda _user_id, _email: ("practice-1", "schema")

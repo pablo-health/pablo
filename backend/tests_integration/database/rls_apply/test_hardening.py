@@ -132,7 +132,7 @@ def test_a_wrong_comment_costs_a_rebuild_and_is_not_reported_as_a_change(
     to know what the statement becomes. The policy ends up exactly as it was,
     so no table is reported altered, and the pass after that touches nothing.
     """
-    from app.db.provisioning import (  # noqa: PLC0415
+    from app.db.provisioning import (
         TEMPLATE_ROW_SECURITY_MARKER,
         apply_template_sql,
     )

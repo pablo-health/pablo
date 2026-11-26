@@ -74,7 +74,7 @@ _HOLD_SECONDS = 0.5
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import _current_user_id  # noqa: PLC0415
+    from app.db import _current_user_id
 
     tokens = [(var, var.set(var.get())) for var in (_current_user_id, _current_tenant_schema)]
     yield
@@ -84,7 +84,7 @@ def _arming_here_stays_here() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def tenant(engine: Engine) -> Iterator[None]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     create_practice_schema(engine, _SCHEMA)
     with Session(bind=engine) as s:

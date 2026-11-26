@@ -56,8 +56,8 @@ def booted_engine() -> Iterator[Engine]:
     platform chain runs here first. Skipping it would test a state no deployment
     is ever in.
     """
-    from app.db.platform_bootstrap import bring_platform_to_head  # noqa: PLC0415
-    from app.db.provisioning import ensure_schemas  # noqa: PLC0415
+    from app.db.platform_bootstrap import bring_platform_to_head
+    from app.db.provisioning import ensure_schemas
 
     scratch = scratch_db.scratch_name("pablo_boot")
     admin = create_engine(_DB_URL, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
@@ -84,7 +84,7 @@ def _registered_schema(engine: Engine, practice_id: str) -> str | None:
 
 class TestFreshInstallProvisionsARealPractice:
     def test_the_registered_practice_is_not_the_template(self, booted_engine: Engine) -> None:
-        from app.db import DEFAULT_PRACTICE_ID, DEFAULT_PRACTICE_SCHEMA  # noqa: PLC0415
+        from app.db import DEFAULT_PRACTICE_ID, DEFAULT_PRACTICE_SCHEMA
 
         schema = _registered_schema(booted_engine, DEFAULT_PRACTICE_ID)
         assert schema is not None, "boot registered no practice at all"
@@ -92,7 +92,7 @@ class TestFreshInstallProvisionsARealPractice:
         assert schema.startswith(f"{DEFAULT_PRACTICE_SCHEMA}_")
 
     def test_no_practice_is_registered_against_the_template(self, booted_engine: Engine) -> None:
-        from app.db import DEFAULT_PRACTICE_SCHEMA  # noqa: PLC0415
+        from app.db import DEFAULT_PRACTICE_SCHEMA
 
         with booted_engine.connect() as conn:
             count = conn.execute(
@@ -103,7 +103,7 @@ class TestFreshInstallProvisionsARealPractice:
 
     def test_the_practice_schema_exists_and_carries_policies(self, booted_engine: Engine) -> None:
         """RLS on, and policies actually present — the property the old shape lacked."""
-        from app.db import DEFAULT_PRACTICE_OWN_SCHEMA  # noqa: PLC0415
+        from app.db import DEFAULT_PRACTICE_OWN_SCHEMA
 
         with booted_engine.connect() as conn:
             tables = conn.execute(
@@ -129,7 +129,7 @@ class TestFreshInstallProvisionsARealPractice:
 
     def test_every_rls_enabled_table_has_at_least_one_policy(self, booted_engine: Engine) -> None:
         """RLS with no policy is deny-all, which fails far from its cause."""
-        from app.db import DEFAULT_PRACTICE_OWN_SCHEMA  # noqa: PLC0415
+        from app.db import DEFAULT_PRACTICE_OWN_SCHEMA
 
         with booted_engine.connect() as conn:
             naked = (
@@ -156,8 +156,8 @@ class TestFreshInstallProvisionsARealPractice:
         It still earns its keep — it rejects the template, the platform
         schema, and public.
         """
-        from app.auth.patient_context import _is_tenant_schema  # noqa: PLC0415
-        from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, DEFAULT_PRACTICE_SCHEMA  # noqa: PLC0415
+        from app.auth.patient_context import _is_tenant_schema
+        from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, DEFAULT_PRACTICE_SCHEMA
 
         assert _is_tenant_schema(DEFAULT_PRACTICE_OWN_SCHEMA)
         assert not _is_tenant_schema(DEFAULT_PRACTICE_SCHEMA)
@@ -166,8 +166,8 @@ class TestFreshInstallProvisionsARealPractice:
 
     def test_boot_is_idempotent(self, booted_engine: Engine) -> None:
         """Every Cloud Run instance races through this on rollout."""
-        from app.db import DEFAULT_PRACTICE_ID  # noqa: PLC0415
-        from app.db.provisioning import ensure_schemas  # noqa: PLC0415
+        from app.db import DEFAULT_PRACTICE_ID
+        from app.db.provisioning import ensure_schemas
 
         before = _registered_schema(booted_engine, DEFAULT_PRACTICE_ID)
         ensure_schemas(booted_engine)

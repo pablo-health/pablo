@@ -50,7 +50,7 @@ _CLINICIAN_B = str(uuid.uuid4())
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = f"practice_test_ai_consent_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
@@ -102,15 +102,15 @@ def _arm(conn: Connection, schema: str, user_id: str) -> None:
 
 
 def _repo_as(engine: Engine, schema: str, user_id: str) -> tuple[Any, Any, Any, Any]:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.client_ai_consent import (  # noqa: PLC0415
+    from app.repositories.postgres.client_ai_consent import (
         PostgresClientAiConsentRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(schema)
     uid_token = _current_user_id.set(user_id)
@@ -121,7 +121,7 @@ def _repo_as(engine: Engine, schema: str, user_id: str) -> tuple[Any, Any, Any, 
 
 
 def _release(session: Any, schema_token: Any, uid_token: Any) -> None:
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)
@@ -153,7 +153,7 @@ def _insert(conn: Connection, patient_id: str, user_id: str, **overrides: str | 
 def test_grantee_records_and_reads_history_in_order(
     engine: Engine, tenant_schema: str, patient_id: str
 ) -> None:
-    from app.services.client_ai_consent import (  # noqa: PLC0415
+    from app.services.client_ai_consent import (
         ai_consent_record,
         record_ai_consent,
     )
@@ -187,7 +187,7 @@ def test_grantee_records_and_reads_history_in_order(
 def test_how_the_answer_was_given_round_trips(
     engine: Engine, tenant_schema: str, patient_id: str
 ) -> None:
-    from app.services.client_ai_consent import (  # noqa: PLC0415
+    from app.services.client_ai_consent import (
         ai_consent_record,
         record_ai_consent,
     )
@@ -222,19 +222,19 @@ def test_an_accepted_telehealth_form_says_how_the_answer_was_given(
     engine: Engine, tenant_schema: str, patient_id: str
 ) -> None:
     """The form recorder's row passes the table's constraints and reads back."""
-    from datetime import UTC, datetime  # noqa: PLC0415
+    from datetime import UTC, datetime
 
-    from app.intake.starters import (  # noqa: PLC0415
+    from app.intake.starters import (
         AI_TOOLS_DOCUMENT_ITEM_KEY,
         AI_TRANSCRIPTION_ITEM_KEY,
         TELEHEALTH_DOCUMENT_ITEM_KEY,
         TELEHEALTH_LOCATION_ITEM_KEY,
     )
-    from app.repositories.patient_intake_signature import (  # noqa: PLC0415
+    from app.repositories.patient_intake_signature import (
         InMemoryPatientIntakeSignatureRepository,
     )
-    from app.services.client_ai_consent import ai_consent_record  # noqa: PLC0415
-    from app.services.intake_form_ai_consent import FormAiConsentRecorder  # noqa: PLC0415
+    from app.services.client_ai_consent import ai_consent_record
+    from app.services.intake_form_ai_consent import FormAiConsentRecorder
 
     assignment_id = str(uuid.uuid4())
     items: list[dict[str, object]] = [
@@ -291,7 +291,7 @@ def test_clinician_without_a_grant_reads_nothing(
 ) -> None:
     repo_a, sess_a, s_a, u_a = _repo_as(engine, tenant_schema, _CLINICIAN_A)
     try:
-        from app.services.client_ai_consent import record_ai_consent  # noqa: PLC0415
+        from app.services.client_ai_consent import record_ai_consent
 
         record_ai_consent(
             patient_id, "consented", date(2026, 10, 3), "clinician", _CLINICIAN_A, repo=repo_a

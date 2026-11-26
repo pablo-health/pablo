@@ -110,7 +110,7 @@ class _Practice:
 
 @pytest.fixture(scope="module")
 def practice() -> Iterator[_Practice]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))

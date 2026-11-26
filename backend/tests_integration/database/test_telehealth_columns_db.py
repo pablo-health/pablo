@@ -50,8 +50,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 _NOW = datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
-_ACCESS_TOKEN = "zoom-access-token-that-must-not-be-readable"  # noqa: S105 — a fixture value
-_REFRESH_TOKEN = "zoom-refresh-token-that-must-not-be-readable"  # noqa: S105 — a fixture value
+_ACCESS_TOKEN = "zoom-access-token-that-must-not-be-readable"
+_REFRESH_TOKEN = "zoom-refresh-token-that-must-not-be-readable"
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +61,7 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     A placeholder that happens to be 32 valid base64 bytes, as the compose
     stack's is: it only ever encrypts this test's throwaway schema.
     """
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", "A" * 43 + "=")
     get_settings.cache_clear()
@@ -72,7 +72,7 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the way a real one is: from the template."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = f"practice_test_telehealth_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)

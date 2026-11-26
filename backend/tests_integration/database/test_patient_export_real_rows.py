@@ -128,7 +128,7 @@ def _storage_root(tenant_schema: str) -> Path:
 @pytest.fixture(scope="module", autouse=True)
 def _encryption_key() -> Iterator[None]:
     """The tax id is stored encrypted; the superbill decrypts it at render time."""
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     previous = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY")
     os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = base64.b64encode(os.urandom(32)).decode()
@@ -145,7 +145,7 @@ def _encryption_key() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -165,16 +165,16 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
 @pytest.fixture(scope="module")
 def chart(engine: Engine, tenant_schema: str) -> dict[str, str]:
     """Seed the chart through the real repositories and return its ids."""
-    from app.models import Note, TherapySession, Transcript  # noqa: PLC0415
-    from app.repositories.clinician_profile import ClinicianProfile  # noqa: PLC0415
-    from app.repositories.postgres.clinician_profile import (  # noqa: PLC0415
+    from app.models import Note, TherapySession, Transcript
+    from app.repositories.clinician_profile import ClinicianProfile
+    from app.repositories.postgres.clinician_profile import (
         PostgresClinicianProfileRepository,
     )
-    from app.repositories.postgres.note import PostgresNotesRepository  # noqa: PLC0415
-    from app.repositories.postgres.session import (  # noqa: PLC0415
+    from app.repositories.postgres.note import PostgresNotesRepository
+    from app.repositories.postgres.session import (
         PostgresTherapySessionRepository,
     )
-    from app.services.practice_billing_profile import update_billing_profile  # noqa: PLC0415
+    from app.services.practice_billing_profile import update_billing_profile
 
     patient_id = _seed_patient(engine, tenant_schema)
     now = datetime.now(UTC).replace(microsecond=0)
@@ -295,7 +295,7 @@ def _seed_clinical(
     and answered on the clinician's. The assistant conversation is the
     clinician's own, about this patient.
     """
-    from app.models import (  # noqa: PLC0415
+    from app.models import (
         ChatConversation,
         ChatMessage,
         PatientMessage,
@@ -303,24 +303,24 @@ def _seed_clinical(
         User,
         UserPreferences,
     )
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+    from app.repositories.postgres.appointment import (
         PostgresAppointmentRepository,
     )
-    from app.repositories.postgres.chat import PostgresChatRepository  # noqa: PLC0415
-    from app.repositories.postgres.diagnostic_assessment import (  # noqa: PLC0415
+    from app.repositories.postgres.chat import PostgresChatRepository
+    from app.repositories.postgres.diagnostic_assessment import (
         PostgresDiagnosticAssessmentRepository,
     )
-    from app.repositories.postgres.medication import (  # noqa: PLC0415
+    from app.repositories.postgres.medication import (
         PostgresMedicationRepository,
     )
-    from app.repositories.postgres.outcome_measure import (  # noqa: PLC0415
+    from app.repositories.postgres.outcome_measure import (
         PostgresOutcomeMeasureRepository,
     )
-    from app.repositories.postgres.patient_message import (  # noqa: PLC0415
+    from app.repositories.postgres.patient_message import (
         PostgresPatientMessageRepository,
     )
-    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
-    from app.scheduling_engine.models.appointment import Appointment  # noqa: PLC0415
+    from app.repositories.postgres.user import PostgresUserRepository
+    from app.scheduling_engine.models.appointment import Appointment
 
     seeded = {
         "appointment": str(uuid.uuid4()),
@@ -490,11 +490,11 @@ def _seed_documents(
     session: Session, tenant_schema: str, patient_id: str, now: datetime
 ) -> dict[str, str]:
     """One finalized upload per category, its bytes written to the store."""
-    from app.models import DocumentCategory, PatientDocument  # noqa: PLC0415
-    from app.repositories.postgres.patient_document import (  # noqa: PLC0415
+    from app.models import DocumentCategory, PatientDocument
+    from app.repositories.postgres.patient_document import (
         PostgresPatientDocumentRepository,
     )
-    from app.services.file_storage import LocalFileStorage  # noqa: PLC0415
+    from app.services.file_storage import LocalFileStorage
 
     repo = PostgresPatientDocumentRepository(session)
     storage = LocalFileStorage()
@@ -596,21 +596,21 @@ def _seed_billing(
     the seeded appointment on the practice-local date it was held, which is
     what lets the superbill render.
     """
-    from app.models.claims import ClaimReceipt  # noqa: PLC0415
-    from app.models.coverage import PatientCoverage  # noqa: PLC0415
-    from app.repositories.postgres.claim_receipts import (  # noqa: PLC0415
+    from app.models.claims import ClaimReceipt
+    from app.models.coverage import PatientCoverage
+    from app.repositories.postgres.claim_receipts import (
         PostgresClaimReceiptRepository,
     )
-    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+    from app.repositories.postgres.claims import PostgresClaimRepository
+    from app.repositories.postgres.coverage import (
         PostgresPatientCoverageRepository,
         PostgresPayerRepository,
     )
-    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
+    from app.repositories.postgres.patient_payment import (
         PostgresPatientPaymentRepository,
     )
-    from app.services.coverage_intake import new_payer  # noqa: PLC0415
-    from tests.claims_fixtures import claim, line  # noqa: PLC0415
+    from app.services.coverage_intake import new_payer
+    from tests.claims_fixtures import claim, line
 
     seeded = {
         "coverage": str(uuid.uuid4()),
@@ -750,7 +750,7 @@ def _seed_patient(engine: Engine, tenant_schema: str) -> str:
 
 def _open_tenant_session(engine: Engine, tenant_schema: str) -> tuple[Session, tuple[Any, ...]]:
     """An ORM session on the practice schema, armed as the clinician and nobody else."""
-    from app.db import arm_current_user_id  # noqa: PLC0415
+    from app.db import arm_current_user_id
 
     session, tokens = _open_session(engine, tenant_schema, user_id=_CLINICIAN, patient_id=None)
     arm_current_user_id(session, _CLINICIAN)
@@ -761,7 +761,7 @@ def _open_patient_session(
     engine: Engine, tenant_schema: str, patient_id: str
 ) -> tuple[Session, tuple[Any, ...]]:
     """An ORM session on the practice schema, armed as the patient and nobody else."""
-    from app.db import arm_current_patient_id  # noqa: PLC0415
+    from app.db import arm_current_patient_id
 
     session, tokens = _open_session(engine, tenant_schema, user_id=None, patient_id=patient_id)
     arm_current_patient_id(session, patient_id)
@@ -780,12 +780,12 @@ def _open_session(
     module left armed is still ambient when the chart is seeded; the seeding
     must not inherit it.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     tokens = (
         _current_tenant_schema.set(tenant_schema),
@@ -798,7 +798,7 @@ def _open_session(
 
 
 def _close_session(session: Session, tokens: tuple[Any, ...]) -> None:
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,

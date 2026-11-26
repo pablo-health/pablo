@@ -75,7 +75,7 @@ _TREATING_CLINICIAN = "3a7e1c82-45bd-5f19-8c62-0e4d7b3a9f15"
 
 
 def _new_schema(engine: Engine, label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # Warm the pool so policy CREATEs referencing ``has_patient_access``
     # (which lives in ``practice``) resolve.
@@ -481,7 +481,7 @@ def test_provisioning_still_raises_on_a_table_it_cannot_policy(
     nothing would give that table row-level security. The practice must be
     refused rather than shipped, and nothing changed on the way.
     """
-    from app.db.provisioning import reconcile_practice_rls  # noqa: PLC0415
+    from app.db.provisioning import reconcile_practice_rls
 
     schema, _, _ = aged
     _add_foreign_table(engine, schema, "other_layer_dispatches", "payload jsonb")

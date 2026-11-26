@@ -62,7 +62,7 @@ def _at(hour: int, minute: int) -> datetime:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = f"practice_test_appt_no_overlap_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)

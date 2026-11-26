@@ -116,7 +116,7 @@ def practice(engine: Engine) -> Iterator[str]:
     Also a sibling schema holding tables of the same names, which must not
     leak into the practice's reads.
     """
-    from tests_integration.database.planner_practice import (  # noqa: PLC0415
+    from tests_integration.database.planner_practice import (
         build_planner_practice,
     )
 
@@ -191,7 +191,7 @@ def test_the_reconcile_reads_through_the_scoped_readers(
 
     The planner, as the template regen runs it over a schema.
     """
-    from app import db  # noqa: PLC0415
+    from app import db
 
     def reconcile_tenant_rls(engine: Engine, schema: str) -> Any:
         with Session(engine) as session:

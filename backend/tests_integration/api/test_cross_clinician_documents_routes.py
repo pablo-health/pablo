@@ -126,7 +126,7 @@ class _Queue:
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -144,7 +144,7 @@ def _arming_here_stays_here() -> Iterator[None]:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -244,7 +244,7 @@ def seed(engine: Engine, tenant_schema: str) -> _Seed:
 
 
 def _user(user_id: str) -> User:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=user_id,
@@ -263,7 +263,7 @@ def _memory_storage() -> Any:
     storage is asked anything. It exists so a control can start and finish an
     upload and mint a download URL.
     """
-    from app.services.file_storage import FileStorageProvider, UploadTarget  # noqa: PLC0415
+    from app.services.file_storage import FileStorageProvider, UploadTarget
 
     class _MemoryStorage(FileStorageProvider):
         def make_upload_target(self, **_kw: Any) -> UploadTarget:
@@ -310,7 +310,7 @@ def queue(monkeypatch: pytest.MonkeyPatch) -> _Queue:
 
 
 @pytest.fixture
-def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
+def client(
     fastapi_app: FastAPI,
     engine: Engine,
     tenant_schema: str,
@@ -319,8 +319,8 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
     queue: _Queue,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -329,17 +329,17 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.routes.patient_documents import (  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.routes.patient_documents import (
         get_patient_document_repository,
         get_patient_documents_service,
     )
-    from app.services.patient_documents_service import (  # noqa: PLC0415
+    from app.services.patient_documents_service import (
         PatientDocumentsService,
     )
-    from app.settings import get_settings  # noqa: PLC0415
-    from fastapi import Depends  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.settings import get_settings
+    from fastapi import Depends
+    from fastapi.testclient import TestClient
 
     del seed, queue  # requested for their setup only
     _truncate_audit(engine, tenant_schema)
@@ -543,7 +543,7 @@ def _send(client: TestClient, method: str, path: str, body: dict[str, Any] | Non
 
 
 @pytest.mark.parametrize("route", _ROUTES, ids=lambda r: r.name)
-def test_blake_cannot_reach_averys_document(  # noqa: PLR0913 — fixtures
+def test_blake_cannot_reach_averys_document(
     route: _Route,
     client: TestClient,
     caller: _Caller,
@@ -652,7 +652,7 @@ def _set_blakes_grant(engine: Engine, schema: str, seed: _Seed, expires_at: date
 
 
 @pytest.mark.parametrize("route", _EXPIRY_ROUTES, ids=lambda r: r.name)
-def test_blakes_grant_stops_reaching_the_document_once_it_expires(  # noqa: PLR0913 — fixtures
+def test_blakes_grant_stops_reaching_the_document_once_it_expires(
     route: _Route,
     client: TestClient,
     caller: _Caller,

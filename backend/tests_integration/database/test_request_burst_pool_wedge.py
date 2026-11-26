@@ -81,8 +81,8 @@ def probe_schema() -> Iterator[None]:
 
 
 def _clear_engine_caches() -> None:
-    from app import db  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
+    from app import db
+    from app.settings import get_settings
 
     for cached in (db.get_nested_session_factory, db.get_session_factory):
         cached.cache_clear()
@@ -112,7 +112,7 @@ def small_pools(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.MonkeyPatch]
 
 def _arm(_request: object, session: Session) -> tuple[str, None]:
     """The prelude without the identity provider: a standalone practice lookup, then arm."""
-    from app.db import create_standalone_session, set_tenant_schema  # noqa: PLC0415
+    from app.db import create_standalone_session, set_tenant_schema
 
     with create_standalone_session() as lookup:
         lookup.execute(text("SELECT 1"))
@@ -121,8 +121,8 @@ def _arm(_request: object, session: Session) -> tuple[str, None]:
 
 
 def _app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
-    from app.db import create_standalone_session, get_db_session  # noqa: PLC0415
-    from app.db.middleware import DatabaseSessionMiddleware  # noqa: PLC0415
+    from app.db import create_standalone_session, get_db_session
+    from app.db.middleware import DatabaseSessionMiddleware
 
     monkeypatch.setattr(DatabaseSessionMiddleware, "_prepare", staticmethod(_arm))
 
@@ -153,8 +153,8 @@ def _fire_burst(application: FastAPI, *, raise_limit: bool) -> list[int]:
     async def run() -> list[int]:
         anyio.to_thread.current_default_thread_limiter().total_tokens = OLD_THREAD_LIMIT
         if raise_limit:
-            from app.main import raise_worker_thread_limit  # noqa: PLC0415
-            from app.settings import get_settings  # noqa: PLC0415
+            from app.main import raise_worker_thread_limit
+            from app.settings import get_settings
 
             raise_worker_thread_limit(get_settings().worker_thread_limit)
         transport = httpx.ASGITransport(app=application, raise_app_exceptions=False)
@@ -206,7 +206,7 @@ def test_standalone_session_pool_follows_what_the_caller_holds(
     Jobs, scripts and worker threads open standalone sessions holding nothing,
     and keep the main pool's concurrency.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _request_session,
         create_standalone_session,
         get_engine,
@@ -240,8 +240,8 @@ def test_tenant_unit_of_work_releases_the_request_connection_and_keeps_the_main_
     probe_schema: None, small_pools: pytest.MonkeyPatch
 ) -> None:
     """``tenant_db_session`` displaces the request session; it must not occupy the nested pool."""
-    from app.db import _request_session, get_engine, get_session_factory  # noqa: PLC0415
-    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
+    from app.db import _request_session, get_engine, get_session_factory
+    from app.db.tenant_session import tenant_db_session
 
     small_pools.setenv("DATABASE_NESTED_POOL_SIZE", "1")
     request_session = get_session_factory()()

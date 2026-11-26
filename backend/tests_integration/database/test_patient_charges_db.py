@@ -141,7 +141,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
     Also maps ``_TENANT_EMAIL`` to it, so ``client`` below resolves it
     through the real lookup rather than a stand-in.
     """
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -250,7 +250,7 @@ class TestCheckConstraints:
         untested by the whole module — the amount rule, the write-off
         biconditional and the every-kind ledger all iterate this list.
         """
-        from app.db.models import CHARGE_KINDS  # noqa: PLC0415
+        from app.db.models import CHARGE_KINDS
 
         assert _CHARGE_KINDS == CHARGE_KINDS
 
@@ -276,14 +276,14 @@ class TestCheckConstraints:
         assert stored == ("session", 15000, "pending")
 
     def test_an_unknown_kind_is_rejected(self, armed_conn: Connection, patient_a: str) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(_INSERT_CHARGE, _charge_params(patient_a, kind="refund"))
         assert "ck_patient_charges_kind" in str(exc.value)
 
     def test_an_unknown_status_is_rejected(self, armed_conn: Connection, patient_a: str) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(_INSERT_CHARGE, _charge_params(patient_a, status="settled"))
@@ -293,7 +293,7 @@ class TestCheckConstraints:
         self, armed_conn: Connection, patient_a: str
     ) -> None:
         """An unexplained write-off is the row nobody can account for later."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(
@@ -312,7 +312,7 @@ class TestCheckConstraints:
         written as an equality between two booleans, and an equality that held
         for only some kinds would still read correctly.
         """
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(
@@ -336,7 +336,7 @@ class TestCheckConstraints:
     def test_an_unknown_write_off_reason_is_rejected(
         self, armed_conn: Connection, patient_a: str
     ) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(
@@ -352,7 +352,7 @@ class TestCheckConstraints:
         here would leave the method cases below asserting the old rule while
         the database enforced the new one.
         """
-        from app.db.models import COLLECTING_CHARGE_KINDS  # noqa: PLC0415
+        from app.db.models import COLLECTING_CHARGE_KINDS
 
         assert set(_COLLECTING_KINDS) == set(COLLECTING_CHARGE_KINDS)
 
@@ -361,7 +361,7 @@ class TestCheckConstraints:
         self, armed_conn: Connection, patient_a: str, kind: str
     ) -> None:
         """A row that says money arrived must say how it arrived."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(_INSERT_CHARGE, _charge_params(patient_a, kind=kind, method=None))
@@ -377,7 +377,7 @@ class TestCheckConstraints:
         amount nobody ever pays — and a method there would be a claim that
         somebody did.
         """
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         reason = "hardship" if kind == "write_off" else None
         with pytest.raises(IntegrityError) as exc:
@@ -403,7 +403,7 @@ class TestCheckConstraints:
         self, armed_conn: Connection, patient_a: str
     ) -> None:
         """An unlabelled 'other' is the row nobody can account for later."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(
@@ -425,7 +425,7 @@ class TestCheckConstraints:
         assert stored == ("other", "Zelle 14 Mar")
 
     def test_an_unknown_method_is_rejected(self, armed_conn: Connection, patient_a: str) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(
@@ -446,7 +446,7 @@ class TestCheckConstraints:
         in ``patient_balance``. The table has to refuse them as flatly as it
         refuses a negative session charge.
         """
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         reason = "hardship" if kind == "write_off" else None
         with pytest.raises(IntegrityError) as exc:
@@ -460,20 +460,20 @@ class TestCheckConstraints:
 @pytest.fixture(scope="module")
 def claim_id(engine: Engine, tenant_schema: str, patient_a: str) -> str:
     """A real claim for client A, built through the real claims repository."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.models.coverage import PatientCoverage  # noqa: PLC0415
-    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+    from app.models.coverage import PatientCoverage
+    from app.repositories.postgres.claims import PostgresClaimRepository
+    from app.repositories.postgres.coverage import (
         PostgresPatientCoverageRepository,
         PostgresPayerRepository,
     )
-    from app.services.coverage_intake import new_payer  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
-    from tests.claims_fixtures import claim, line  # noqa: PLC0415
+    from app.services.coverage_intake import new_payer
+    from sqlalchemy.orm import Session as OrmSession
+    from tests.claims_fixtures import claim, line
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(_CLINICIAN_A)
@@ -543,7 +543,7 @@ class TestOnePendingPaymentPerClient:
         self, armed_conn: Connection, patient_a: str
     ) -> None:
         """The bug: the client is charged twice and the practice owes a refund."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         armed_conn.execute(
             _INSERT_CHARGE, _charge_params(patient_a, kind="payment", status="pending")
@@ -648,7 +648,7 @@ class TestClaimForeignKey:
         self, armed_conn: Connection, patient_a: str
     ) -> None:
         """Proves the constraint is a foreign key at all, not a bare uuid column."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         with pytest.raises(IntegrityError) as exc:
             armed_conn.execute(
@@ -705,7 +705,7 @@ class TestClaimForeignKey:
 
 
 def _user(user_id: str, email: str) -> Any:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     accepted = datetime(2026, 1, 1, tzinfo=UTC)
     return User(
@@ -720,14 +720,14 @@ def _user(user_id: str, email: str) -> Any:
 
 def _build_app(tenant_schema: str) -> FastAPI:
     """The real payments router, real middleware, two real credentials."""
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.service import (
         TenantContext,
         get_tenant_context,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.db.middleware import DatabaseSessionMiddleware  # noqa: PLC0415
-    from app.routes.patient_payments import router  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.db.middleware import DatabaseSessionMiddleware
+    from app.routes.patient_payments import router
 
     users = {
         _CLINICIAN_A: _user(_CLINICIAN_A, _CLINICIAN_A_EMAIL),
@@ -768,7 +768,7 @@ def _build_app(tenant_schema: str) -> FastAPI:
 
 @pytest.fixture
 def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
 
     # There's no Firebase token to decode in tests, so stand in for the one
     # thing it would have produced — a verified identity — and let the
@@ -804,15 +804,15 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
     magic numbers, and clears the ledger afterwards so the isolation tests
     still see a table they seeded themselves.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
+    from app.repositories.postgres.patient_payment import (
         PostgresPatientPaymentRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     visit_one = str(uuid.uuid4())
     visit_two = str(uuid.uuid4())
@@ -927,15 +927,15 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
 
 def _charges_from_db(engine: Engine, tenant_schema: str, patient_id: str) -> list[Any]:
     """The ledger read out of band through the repository, as the route reads it."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.patient_payment import (  # noqa: PLC0415
+    from app.repositories.postgres.patient_payment import (
         PostgresPatientPaymentRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(_CLINICIAN_A)
@@ -1079,7 +1079,7 @@ class TestRouteAgreesWithTheBalanceFunction:
         patient_a: str,
         seeded_ledger: dict[str, int],
     ) -> None:
-        from app.payments.balance import patient_balance  # noqa: PLC0415
+        from app.payments.balance import patient_balance
 
         response = client.get(f"/api/patients/{patient_a}/balance", headers=_as(_CLINICIAN_A))
         assert response.status_code == 200, response.text
@@ -1133,8 +1133,8 @@ class TestRouteAgreesWithTheBalanceFunction:
         ``settled_by_charge_id``, the two would tell different stories and
         neither response would look wrong on its own.
         """
-        from app.models.payments import PatientCharge  # noqa: PLC0415
-        from app.payments.balance import patient_balance  # noqa: PLC0415
+        from app.models.payments import PatientCharge
+        from app.payments.balance import patient_balance
 
         listed = client.get(f"/api/patients/{patient_a}/charges", headers=_as(_CLINICIAN_A))
         assert listed.status_code == 200, listed.text

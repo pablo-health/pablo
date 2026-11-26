@@ -468,8 +468,8 @@ class TestRunInTenant:
 
 def test_importable_from_db_package() -> None:
     """Both helpers must be importable directly from app.db."""
-    from app.db import run_in_tenant as _rit  # noqa: PLC0415
-    from app.db import tenant_db_session as _tds  # noqa: PLC0415
+    from app.db import run_in_tenant as _rit
+    from app.db import tenant_db_session as _tds
 
     assert callable(_tds)
     assert callable(_rit)

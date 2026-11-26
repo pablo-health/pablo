@@ -66,7 +66,7 @@ def _live_rows(conn: Connection, schema: str) -> int:
 @pytest.fixture(scope="module")
 def schemas(engine: Engine) -> Iterator[tuple[str, str]]:
     """One practice with an audit row in it, and one with none."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     busy = f"practice_test_probe_busy_{uuid.uuid4().hex[:8]}"
     quiet = f"practice_test_probe_quiet_{uuid.uuid4().hex[:8]}"
@@ -118,7 +118,7 @@ def test_the_role_under_test_cannot_bypass_row_policies(engine: Engine) -> None:
 def test_rows_the_policies_hide_are_reported_hidden(
     engine: Engine, schemas: tuple[str, str]
 ) -> None:
-    from app.jobs.hipaa_log_review import audit_rows_hidden  # noqa: PLC0415
+    from app.jobs.hipaa_log_review import audit_rows_hidden
 
     busy, _ = schemas
     with engine.connect() as conn:
@@ -131,7 +131,7 @@ def test_rows_the_policies_hide_are_reported_hidden(
 def test_the_same_rows_seen_by_their_writer_are_not_hidden(
     engine: Engine, schemas: tuple[str, str]
 ) -> None:
-    from app.jobs.hipaa_log_review import audit_rows_hidden  # noqa: PLC0415
+    from app.jobs.hipaa_log_review import audit_rows_hidden
 
     busy, _ = schemas
     with engine.connect() as conn:
@@ -141,7 +141,7 @@ def test_the_same_rows_seen_by_their_writer_are_not_hidden(
 
 
 def test_an_empty_table_is_quiet_not_hidden(engine: Engine, schemas: tuple[str, str]) -> None:
-    from app.jobs.hipaa_log_review import audit_rows_hidden  # noqa: PLC0415
+    from app.jobs.hipaa_log_review import audit_rows_hidden
 
     busy, quiet = schemas
     with engine.connect() as conn:

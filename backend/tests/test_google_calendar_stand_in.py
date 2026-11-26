@@ -90,10 +90,10 @@ class TestWhereTheCallsGo:
         whatever the surface says: on the end-to-end stack that is a 401 from
         the real API in the middle of a read of the stand-in.
         """
-        import ast  # noqa: PLC0415
-        import inspect  # noqa: PLC0415
+        import ast
+        import inspect
 
-        from app.services import google_calendar_service  # noqa: PLC0415
+        from app.services import google_calendar_service
 
         tree = ast.parse(inspect.getsource(google_calendar_service))
         callers = {

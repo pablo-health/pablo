@@ -52,7 +52,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -100,15 +100,15 @@ def seed_patient_and_grant(engine: Engine, tenant_schema: str) -> tuple[str, str
 
 
 def _make_repo(engine: Engine, tenant_schema: str, user_id: str):
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from app.repositories.postgres.diagnostic_assessment import (  # noqa: PLC0415
+    from app.repositories.postgres.diagnostic_assessment import (
         PostgresDiagnosticAssessmentRepository,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(user_id)
@@ -120,7 +120,7 @@ def _make_repo(engine: Engine, tenant_schema: str, user_id: str):
 
 
 def _cleanup_tokens(session, schema_token, uid_token):  # type: ignore[no-untyped-def]
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)
@@ -200,7 +200,7 @@ class TestClinicianBIsIsolated:
     def test_add_raises_app_error(
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
-        from app.repositories.diagnostic_assessment import (  # noqa: PLC0415
+        from app.repositories.diagnostic_assessment import (
             PatientDiagnosticAccessDeniedError,
         )
 
@@ -217,7 +217,7 @@ class TestClinicianBIsIsolated:
     def test_raw_insert_rejected_by_rls(
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
-        from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+        from sqlalchemy.exc import ProgrammingError
 
         patient_id, _ = seed_patient_and_grant
         clinician_b = "73738015-ff11-5dc3-81d1-28314d804335"
@@ -252,7 +252,7 @@ class TestSourceConstraint:
     def test_bogus_source_rejected(
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         patient_id, clinician_a = seed_patient_and_grant
         with engine.connect() as conn:
@@ -281,9 +281,9 @@ class TestSeedIdempotency:
     """Running the reference-data seed twice must not create duplicate rows."""
 
     def test_seed_is_idempotent(self, engine: Engine) -> None:
-        from app.diagnostics.baseline import BASELINE_DEFINITIONS  # noqa: PLC0415
-        from app.diagnostics.seed import seed_diagnostic_reference_data  # noqa: PLC0415
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from app.diagnostics.baseline import BASELINE_DEFINITIONS
+        from app.diagnostics.seed import seed_diagnostic_reference_data
+        from sqlalchemy.orm import Session as OrmSession
 
         def _counts(conn) -> tuple[int, int]:  # type: ignore[no-untyped-def]
             n_codes = conn.execute(text("SELECT count(*) FROM platform.icd10_codes")).scalar()

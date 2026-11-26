@@ -110,7 +110,7 @@ class _Caller:
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -128,7 +128,7 @@ def _arming_here_stays_here() -> Iterator[None]:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -228,7 +228,7 @@ def seed(engine: Engine, tenant_schema: str) -> _Seed:
 
 
 def _user(user_id: str, name: str) -> User:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=user_id,
@@ -247,7 +247,7 @@ def caller() -> _Caller:
 
 @pytest.fixture
 def fake_gateway() -> FakeChatLLMGateway:
-    from app.services.chat_llm_gateway import (  # noqa: PLC0415
+    from app.services.chat_llm_gateway import (
         FakeChatLLMGateway,
         StreamEvent,
     )
@@ -261,7 +261,7 @@ def fake_gateway() -> FakeChatLLMGateway:
 
 
 @pytest.fixture
-def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
+def client(
     fastapi_app: FastAPI,
     engine: Engine,
     tenant_schema: str,
@@ -270,8 +270,8 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
     fake_gateway: FakeChatLLMGateway,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -280,9 +280,9 @@ def client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.routes.chat import get_chat_llm_gateway  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.routes.chat import get_chat_llm_gateway
+    from fastapi.testclient import TestClient
 
     _truncate_chat(engine, tenant_schema)
 
@@ -501,7 +501,7 @@ _CONVERSATION_ROUTES = (
 
 
 @pytest.mark.parametrize("route", _CONVERSATION_ROUTES, ids=lambda r: r.name)
-def test_blake_cannot_reach_averys_conversation(  # noqa: PLR0913 — fixtures
+def test_blake_cannot_reach_averys_conversation(
     route: _ConversationRoute,
     client: TestClient,
     caller: _Caller,
@@ -588,7 +588,7 @@ _PATIENT_ROUTES: tuple[tuple[str, Callable[[TestClient, str], Response], int], .
 @pytest.mark.parametrize(
     ("name", "call", "ok"), _PATIENT_ROUTES, ids=[r[0] for r in _PATIENT_ROUTES]
 )
-def test_blake_cannot_name_averys_client(  # noqa: PLR0913 — fixtures
+def test_blake_cannot_name_averys_client(
     name: str,
     call: Callable[[TestClient, str], Response],
     ok: int,
@@ -649,7 +649,7 @@ def test_control_avery_names_xaviers_rows_and_the_model_sees_them(
     assert _Y_DOC_TEXT not in prompt
 
 
-def test_blakes_turn_carries_none_of_xaviers_rows(  # noqa: PLR0913 — fixtures
+def test_blakes_turn_carries_none_of_xaviers_rows(
     client: TestClient,
     caller: _Caller,
     engine: Engine,

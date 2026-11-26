@@ -63,7 +63,7 @@ FEED = "ical:sessions_health"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = f"practice_test_gcal_off_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
@@ -420,7 +420,7 @@ def test_the_purge_is_scoped_by_clinician_even_where_rls_is_not(
     A connection that bypasses RLS — the container's superuser, as a job or
     an admin path might run — can.
     """
-    from tests_integration.conftest import _PgState  # noqa: PLC0415
+    from tests_integration.conftest import _PgState
 
     if _PgState.container is None:
         pytest.skip("needs the testcontainer's superuser; an external database has none here")

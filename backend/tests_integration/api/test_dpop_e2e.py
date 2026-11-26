@@ -68,7 +68,7 @@ _PROBE_PATH = "/api/health"
 
 def _make_keypair() -> tuple[EllipticCurvePrivateKey, dict[str, str]]:
     """Generate a P-256 keypair and its public JWK (what a companion enrolls)."""
-    from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import ec
 
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_jwk = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(private_key.public_key()))
@@ -103,16 +103,16 @@ def enrolled(engine: Engine) -> Iterator[dict]:
     Returns the user id, install_id, signing key, and a second
     ("other") user + key for cross-user / wrong-key cases.
     """
-    from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
-    from app.models.companion_device import CompanionEnrollment  # noqa: PLC0415
-    from app.repositories.postgres.companion_device import (  # noqa: PLC0415
+    from app.db.platform_models import PlatformUserRow
+    from app.models.companion_device import CompanionEnrollment
+    from app.repositories.postgres.companion_device import (
         PostgresCompanionDeviceRepository,
     )
-    from app.services.companion_device_service import (  # noqa: PLC0415
+    from app.services.companion_device_service import (
         CompanionDeviceService,
     )
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     user_id = str(uuid.uuid4())
     other_user_id = str(uuid.uuid4())
@@ -177,8 +177,8 @@ def enrolled(engine: Engine) -> Iterator[dict]:
 @pytest.fixture
 def client(enrolled: dict, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """Real ``app.main`` app; only Firebase identity resolution is patched."""
-    from app.main import app  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.main import app
+    from fastapi.testclient import TestClient
 
     monkeypatch.setattr(
         "app.middleware.dpop._resolve_user_id",
@@ -251,10 +251,10 @@ class TestDPoPEndToEnd:
     def test_touch_failure_does_not_fail_the_request(
         self, client: TestClient, enrolled: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from app.repositories.postgres.companion_device import (  # noqa: PLC0415
+        from app.repositories.postgres.companion_device import (
             PostgresCompanionDeviceRepository,
         )
-        from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+        from sqlalchemy.exc import OperationalError
 
         def _fail(_self: object, _user_id: str, _install_id: str) -> None:
             raise OperationalError("UPDATE", {}, Exception("canceling statement"))
@@ -323,9 +323,9 @@ class TestDPoPEndToEnd:
         # set (the API's public origin from BACKEND_BASE_URL/APP_URL), so we
         # forward the CONFIGURED public host — whatever this test
         # environment resolves to — to exercise the trusted path.
-        from urllib.parse import urlsplit  # noqa: PLC0415
+        from urllib.parse import urlsplit
 
-        from app.settings import settings  # noqa: PLC0415
+        from app.settings import settings
 
         # Mirror the middleware's _trusted_hosts derivation: prefer the
         # API's own origin (backend_base_url), fall back to app_url.
@@ -394,14 +394,14 @@ def shared_install(enrolled: dict, engine: Engine) -> Iterator[str]:
     That is what the companion does when two accounts sign in on one OS
     user: it keeps one install_id + device key whichever account signs in.
     """
-    from app.models.companion_device import CompanionEnrollment  # noqa: PLC0415
-    from app.repositories.postgres.companion_device import (  # noqa: PLC0415
+    from app.models.companion_device import CompanionEnrollment
+    from app.repositories.postgres.companion_device import (
         PostgresCompanionDeviceRepository,
     )
-    from app.services.companion_device_service import (  # noqa: PLC0415
+    from app.services.companion_device_service import (
         CompanionDeviceService,
     )
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from sqlalchemy.orm import Session
 
     install_id = uuid.uuid4().hex
     key: EllipticCurvePrivateKey = enrolled["key"]
@@ -430,8 +430,8 @@ def shared_install(enrolled: dict, engine: Engine) -> Iterator[str]:
 @pytest.fixture
 def two_user_client(enrolled: dict, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """Real app; bearer ``token-a`` resolves to user A, ``token-b`` to user B."""
-    from app.main import app  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.main import app
+    from fastapi.testclient import TestClient
 
     users = {"token-a": enrolled["user_id"], "token-b": enrolled["other_user_id"]}
     monkeypatch.setattr(
@@ -503,14 +503,14 @@ class TestSharedInstall:
     def test_reenrolling_one_user_does_not_rebind_the_other_users_key(
         self, two_user_client: TestClient, enrolled: dict, engine: Engine, shared_install: str
     ) -> None:
-        from app.models.companion_device import CompanionEnrollment  # noqa: PLC0415
-        from app.repositories.postgres.companion_device import (  # noqa: PLC0415
+        from app.models.companion_device import CompanionEnrollment
+        from app.repositories.postgres.companion_device import (
             PostgresCompanionDeviceRepository,
         )
-        from app.services.companion_device_service import (  # noqa: PLC0415
+        from app.services.companion_device_service import (
             CompanionDeviceService,
         )
-        from sqlalchemy.orm import Session  # noqa: PLC0415
+        from sqlalchemy.orm import Session
 
         new_key, new_jwk = _make_keypair()
         with Session(engine) as session:

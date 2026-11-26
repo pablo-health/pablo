@@ -58,7 +58,7 @@ _RLS_DENIED = (IntegrityError, InternalError, ProgrammingError)
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -95,8 +95,8 @@ def _build_request() -> MagicMock:
 
 
 def _service(session: Session) -> object:
-    from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
-    from app.services.audit_service import AuditService  # noqa: PLC0415
+    from app.repositories.postgres.audit import PostgresAuditRepository
+    from app.services.audit_service import AuditService
 
     return AuditService(PostgresAuditRepository(session))
 
@@ -135,7 +135,7 @@ class TestTheServiceWriteReachesPostgres:
         """``user_id`` carries the actor and ``patient_id`` the subject —
         the same person here, which is what makes "everything this actor
         did" and "everything about this patient" both find the row."""
-        from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType  # noqa: PLC0415
+        from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType
 
         patient_id = str(uuid.uuid4())
         session = _session_as(engine, tenant_schema, "app.current_patient_id", patient_id)
@@ -169,7 +169,7 @@ class TestTheServiceWriteReachesPostgres:
         """``AuditAction | str`` is a deliberate door, so a plain string
         has to land in a ``VARCHAR(50)`` column intact rather than as
         ``str(SomeEnum.X)`` or a truncation."""
-        from app.models.audit import ResourceType  # noqa: PLC0415
+        from app.models.audit import ResourceType
 
         patient_id = str(uuid.uuid4())
         session = _session_as(engine, tenant_schema, "app.current_patient_id", patient_id)
@@ -197,7 +197,7 @@ class TestTheServiceWriteReachesPostgres:
         Called outside a patient principal's request the policy must
         refuse the row rather than accept an unattributable one.
         """
-        from app.models.audit import AuditAction, ResourceType  # noqa: PLC0415
+        from app.models.audit import AuditAction, ResourceType
 
         patient_id = str(uuid.uuid4())
         factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -221,7 +221,7 @@ class TestTheServiceWriteReachesPostgres:
     ) -> None:
         """The service takes ``patient_id`` as an argument, so nothing in
         Python stops a caller passing someone else's. The policy has to."""
-        from app.models.audit import AuditAction, ResourceType  # noqa: PLC0415
+        from app.models.audit import AuditAction, ResourceType
 
         armed = str(uuid.uuid4())
         someone_else = str(uuid.uuid4())
@@ -246,7 +246,7 @@ class TestTheServiceWriteReachesPostgres:
         this path, which is exactly the kind of thing that is true until
         someone reorders two lines. Proven against the real table so a
         refusal that happened *after* the INSERT would still fail here."""
-        from app.models.audit import AuditAction, ResourceType  # noqa: PLC0415
+        from app.models.audit import AuditAction, ResourceType
 
         patient_id = str(uuid.uuid4())
         session = _session_as(engine, tenant_schema, "app.current_patient_id", patient_id)
@@ -300,7 +300,7 @@ class TestPatientRowsDoNotPoseAsClinicianRows:
     def test_a_patient_self_action_is_absent_from_the_clinician_review(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
+        from app.repositories.postgres.audit import PostgresAuditRepository
 
         patient_id = str(uuid.uuid4())
         session = _session_as(engine, tenant_schema, "app.current_patient_id", patient_id)

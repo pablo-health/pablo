@@ -37,7 +37,7 @@ _DIRECTORY_TABLES = {"appointments", "patient_clinicians", "patients"}
 
 
 def _new_schema(engine: Engine, label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))

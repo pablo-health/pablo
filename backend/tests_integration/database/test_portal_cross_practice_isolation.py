@@ -213,11 +213,11 @@ def _issue_and_redeem(
     resolver that later answers for this session is the one the app
     registered at startup, not an override.
     """
-    from app.db import create_standalone_session  # noqa: PLC0415
-    from app.portal.db_store import DbPortalAuthStore, DbPortalSessionStore  # noqa: PLC0415
-    from app.portal.delivery import CapturingInviteDelivery, FakeSmsGateway  # noqa: PLC0415
-    from app.portal.factory import build_portal_auth_service  # noqa: PLC0415
-    from app.portal.tokens import verify_session_token  # noqa: PLC0415
+    from app.db import create_standalone_session
+    from app.portal.db_store import DbPortalAuthStore, DbPortalSessionStore
+    from app.portal.delivery import CapturingInviteDelivery, FakeSmsGateway
+    from app.portal.factory import build_portal_auth_service
+    from app.portal.tokens import verify_session_token
 
     delivery = CapturingInviteDelivery()
     sms = FakeSmsGateway()
@@ -269,7 +269,7 @@ def _app_imported() -> None:
     ``app.main`` configures logging and reads settings at import; doing that
     from inside a test would empty a capture the same test is about to read.
     """
-    import app.main  # noqa: PLC0415, F401
+    import app.main  # noqa: F401
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -280,7 +280,7 @@ def _portal_settings() -> Iterator[None]:
     and every fixture below that mints or verifies a token reads it from
     settings at call time.
     """
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     mp = pytest.MonkeyPatch()
     mp.setenv("PORTAL_TOKEN_SIGNING_KEY", _SIGNING_KEY)
@@ -320,7 +320,7 @@ def practice_x(engine: Engine) -> Iterator[str]:
     integration suites exercise. Reused rather than re-implemented so this
     module covers the real lookup, not a stand-in for it.
     """
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -332,7 +332,7 @@ def practice_x(engine: Engine) -> Iterator[str]:
 def practice_y(engine: Engine) -> Iterator[str]:
     """Practice Y. No clinician ever legitimately reaches it in this module,
     so it gets no email mapping — only the schema and a patient."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         # Warm the pool: policy CREATEs inside create_practice_schema call
@@ -414,7 +414,7 @@ def patient_records(engine: Engine, practice_x: str, practice_y: str) -> tuple[s
 
 @pytest.fixture(scope="module")
 def clinician_x_user():  # type: ignore[no-untyped-def]
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=_CLINICIAN_X_ID,
@@ -446,7 +446,7 @@ def _wire_clinician_x(practice_x: str, clinician_x_user) -> Iterator[None]:  # t
     routes below depend on none of them — so wiring them here does nothing
     to the patient-session tests in this module.
     """
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -455,13 +455,13 @@ def _wire_clinician_x(practice_x: str, clinician_x_user) -> Iterator[None]:  # t
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db.middleware import _verify_and_stash_clinician_identity  # noqa: F401, PLC0415
-    from app.main import app  # noqa: PLC0415
+    from app.db.middleware import _verify_and_stash_clinician_identity  # noqa: F401
+    from app.main import app
 
     mp = pytest.MonkeyPatch()
 
     def _stash_only_the_sentinel(request) -> None:  # type: ignore[no-untyped-def]
-        from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+        from app.auth.providers import VerifiedIdentity
 
         auth_header = request.headers.get("authorization", "")
         scheme, _, token = auth_header.partition(" ")
@@ -489,7 +489,7 @@ def _wire_clinician_x(practice_x: str, clinician_x_user) -> Iterator[None]:  # t
         # redone here or `has_patient_access()` (and the audit-log insert
         # policy) see no principal at all and deny everything, including
         # clinician X's own data.
-        from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
+        from app.db import arm_current_user_id, get_db_session
 
         arm_current_user_id(get_db_session(), _CLINICIAN_X_ID)
         return _CLINICIAN_X_ID
@@ -522,9 +522,9 @@ def _wire_clinician_x(practice_x: str, clinician_x_user) -> Iterator[None]:  # t
 
 @pytest.fixture(scope="module")
 def client() -> Iterator[TestClient]:
-    from app.main import app  # noqa: PLC0415
-    from app.rate_limit import reset_portal_limiters  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.main import app
+    from app.rate_limit import reset_portal_limiters
+    from fastapi.testclient import TestClient
 
     reset_portal_limiters()
     yield TestClient(app)
@@ -647,7 +647,7 @@ class TestPatientCannotReachAnotherPracticesThread:
         other = client.get(f"{THREADS_URL}/{thread_y}", headers=_headers(session_x.session_token))
         assert other.status_code == 404
 
-    def test_posting_into_the_other_practices_thread_is_404_and_writes_nothing(  # noqa: PLR0913
+    def test_posting_into_the_other_practices_thread_is_404_and_writes_nothing(
         self,
         engine: Engine,
         client: TestClient,
@@ -748,7 +748,7 @@ class TestIntakeStaysInItsOwnSchema:
         assert form_y.status_code == 200
         assert form_y.json()["identity"]["first_name"] == _PATIENT_Y_FIRST
 
-    def test_a_submission_lands_only_in_the_submitting_patients_schema(  # noqa: PLR0913
+    def test_a_submission_lands_only_in_the_submitting_patients_schema(
         self,
         engine: Engine,
         client: TestClient,
@@ -801,7 +801,7 @@ class TestForgedAndOrphanedTokens:
     def test_a_signed_token_naming_an_unprovisioned_practice_is_401_with_no_schema_created(
         self, engine: Engine, client: TestClient
     ) -> None:
-        from app.portal.tokens import (  # noqa: PLC0415
+        from app.portal.tokens import (
             SessionClaims,
             TokenLifetime,
             mint_session_token,
@@ -834,8 +834,8 @@ class TestForgedAndOrphanedTokens:
     ) -> None:
         """A throwaway session, so revoking it here does not disturb the
         module-scoped session other tests in this file still rely on."""
-        from app.db import create_standalone_session  # noqa: PLC0415
-        from app.portal.db_store import DbPortalSessionStore  # noqa: PLC0415
+        from app.db import create_standalone_session
+        from app.portal.db_store import DbPortalSessionStore
 
         _, patient_y = patient_records
         throwaway = _issue_and_redeem(
@@ -920,7 +920,7 @@ class TestClinicianTenantContextNeverReachesAnotherPractice:
 
 
 class TestRefusedCrossPracticeCallsAuditNothing:
-    def test_no_audit_rows_land_anywhere_and_no_body_or_name_reaches_a_log(  # noqa: PLR0913
+    def test_no_audit_rows_land_anywhere_and_no_body_or_name_reaches_a_log(
         self,
         engine: Engine,
         client: TestClient,

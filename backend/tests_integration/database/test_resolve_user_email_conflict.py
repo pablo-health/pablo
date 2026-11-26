@@ -42,13 +42,13 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def existing_user(engine: Engine) -> Iterator[tuple[str, str, str]]:
     """A provisioned user: platform row, its identity, and its practice mapping."""
-    from app.db import DEFAULT_PRACTICE_ID  # noqa: PLC0415
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_ID
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         UserIdentityRow,
     )
-    from app.utcnow import utc_now  # noqa: PLC0415
+    from app.utcnow import utc_now
 
     user_id = str(uuid.uuid4())
     uid = f"fb{uuid.uuid4().hex[:26]}"
@@ -80,10 +80,10 @@ def existing_user(engine: Engine) -> Iterator[tuple[str, str, str]]:
 
 
 def _resolve(session: Session, decoded: dict[str, object]):  # type: ignore[no-untyped-def]
-    from app.auth.service import _resolve_user  # noqa: PLC0415
-    from app.repositories.postgres.allowlist import PostgresAllowlistRepository  # noqa: PLC0415
-    from app.repositories.postgres.identity import PostgresIdentityRepository  # noqa: PLC0415
-    from app.repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
+    from app.auth.service import _resolve_user
+    from app.repositories.postgres.allowlist import PostgresAllowlistRepository
+    from app.repositories.postgres.identity import PostgresIdentityRepository
+    from app.repositories.postgres.user import PostgresUserRepository
 
     return _resolve_user(
         decoded,
@@ -97,7 +97,7 @@ def _resolve(session: Session, decoded: dict[str, object]):  # type: ignore[no-u
 def test_a_new_uid_with_a_taken_email_is_a_conflict_and_writes_nothing(
     engine: Engine, existing_user: tuple[str, str, str]
 ) -> None:
-    from app.db.platform_models import PlatformUserRow, UserIdentityRow  # noqa: PLC0415
+    from app.db.platform_models import PlatformUserRow, UserIdentityRow
 
     user_id, old_uid, email = existing_user
     new_uid = f"fb{uuid.uuid4().hex[:26]}"

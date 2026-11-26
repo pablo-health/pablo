@@ -347,8 +347,8 @@ class TestTheJobCanStillSpeakAfterAlembicConfiguresLogging:
         then prove a negative about output, which is exactly the shape of test
         that passes for the wrong reason. The argument IS the behaviour.
         """
-        import ast  # noqa: PLC0415
-        from pathlib import Path as _Path  # noqa: PLC0415
+        import ast
+        from pathlib import Path as _Path
 
         env_py = _Path(__file__).resolve().parents[1] / "alembic" / "env.py"
         tree = ast.parse(env_py.read_text(encoding="utf-8"))
@@ -392,9 +392,9 @@ class TestTheJobCanStillSpeakAfterAlembicConfiguresLogging:
         the test lying about the product, and it is exactly the failure mode
         this class exists to catch, so it is worth not reproducing.
         """
-        import logging  # noqa: PLC0415
-        from logging.config import fileConfig  # noqa: PLC0415
-        from pathlib import Path as _Path  # noqa: PLC0415
+        import logging
+        from logging.config import fileConfig
+        from pathlib import Path as _Path
 
         before = logging.getLogger("pablo.test.made_before_alembic")
         ini = _Path(__file__).resolve().parents[1] / "alembic.ini"

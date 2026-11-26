@@ -166,7 +166,7 @@ def draft_version(packet_service: IntakePacketService) -> str:
 
 
 def _publish(service: IntakePacketService, name: str, items: list[dict[str, Any]]) -> str:
-    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller, in a fixture
+    from app.intake.items import ItemDraft
 
     template = service.create_template(name, "clinician-1")
     version_id = str(service.list_versions(str(template["id"]))[0]["id"])

@@ -119,13 +119,13 @@ def _armed(engine: Engine, schema: str, user_id: str) -> Iterator[Connection]:
 
 def _seed_practice(engine: Engine, practice_id: str, schema: str, clinician: str) -> Practice:
     """Provision the schema, register the practice, and give it one client."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     create_practice_schema(engine, schema)
 
@@ -188,12 +188,12 @@ def _seed_practice(engine: Engine, practice_id: str, schema: str, clinician: str
 
 def _seed_coverage(engine: Engine, schema: str, clinician: str, patient_id: str) -> tuple[str, str]:
     """A payer and an active coverage, the two rows a claim must point at."""
-    from app.models.coverage import PatientCoverage  # noqa: PLC0415
-    from app.repositories.postgres.coverage import (  # noqa: PLC0415
+    from app.models.coverage import PatientCoverage
+    from app.repositories.postgres.coverage import (
         PostgresPatientCoverageRepository,
         PostgresPayerRepository,
     )
-    from app.services.coverage_intake import new_payer  # noqa: PLC0415
+    from app.services.coverage_intake import new_payer
 
     with _tenant_session(engine, schema, clinician) as session:
         payer = PostgresPayerRepository(session).create(
@@ -217,12 +217,12 @@ def _seed_coverage(engine: Engine, schema: str, clinician: str, patient_id: str)
 @contextlib.contextmanager
 def _tenant_session(engine: Engine, schema: str, user_id: str) -> Iterator[Any]:
     """An ORM session armed the way an off-request worker opens one."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(schema)
     uid_token = _current_user_id.set(user_id)
@@ -249,13 +249,13 @@ def practices(engine: Engine) -> Iterator[Practices]:
     )
     yield both
 
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
     )
-    from sqlalchemy import delete  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy import delete
+    from sqlalchemy.orm import Session as OrmSession
 
     with OrmSession(bind=engine) as session:
         for practice in (both.a, both.b):
@@ -294,7 +294,7 @@ def payment_app(practices: Practices) -> Iterator[FastAPI]:
     practice lookup, the ledger update and the dedupe ledger are the shipped
     ones, running against the container's Postgres.
     """
-    from app.routes import payment_webhooks  # noqa: PLC0415
+    from app.routes import payment_webhooks
 
     del practices
     with pytest.MonkeyPatch.context() as mp:
@@ -331,7 +331,7 @@ def _payment_body(event_id: str, event_type: str, obj: dict[str, Any]) -> bytes:
 
 def _ours(payment_intent_id: str, practice: Practice, charge_id: str) -> dict[str, Any]:
     """A PaymentIntent carrying the metadata the charge route stamps on one."""
-    from app.payments.reconcile import (  # noqa: PLC0415
+    from app.payments.reconcile import (
         METADATA_CHARGE_ID,
         METADATA_PRACTICE_ID,
         METADATA_USER_ID,
@@ -348,7 +348,7 @@ def _ours(payment_intent_id: str, practice: Practice, charge_id: str) -> dict[st
 
 
 def _deliver_payment(client: TestClient, body: bytes, *, signature: str | None = None) -> Any:
-    from app.routes.payment_webhooks import PAYMENT_WEBHOOK_PATH  # noqa: PLC0415
+    from app.routes.payment_webhooks import PAYMENT_WEBHOOK_PATH
 
     headers = {"content-type": "application/json"}
     if signature is None:
@@ -451,9 +451,9 @@ def claims(practices: Practices) -> Iterator[ClaimRig]:
     answers on. The practice registry, the tenant sessions, the claim
     repositories and the receipt ledger are the shipped ones on real Postgres.
     """
-    from app.claims import fanout  # noqa: PLC0415
-    from app.routes import claim_webhooks  # noqa: PLC0415
-    from tests.claims_pipeline_fakes import FakeClearinghouse  # noqa: PLC0415
+    from app.claims import fanout
+    from app.routes import claim_webhooks
+    from tests.claims_pipeline_fakes import FakeClearinghouse
 
     # ONE account, as the deployment has: the credential provider resolves the
     # deployment's own key without regard to which practice is asking, and the
@@ -500,7 +500,7 @@ def _claim_body(event_id: str, transaction_id: str) -> bytes:
 
 
 def _deliver_claim(rig: ClaimRig, body: bytes, *, headers: dict[str, str] | None = None) -> Any:
-    from app.routes.claim_webhooks import CLEARINGHOUSE_WEBHOOK_PATH  # noqa: PLC0415
+    from app.routes.claim_webhooks import CLEARINGHOUSE_WEBHOOK_PATH
 
     return rig.client.post(
         CLEARINGHOUSE_WEBHOOK_PATH,
@@ -527,9 +527,9 @@ def _add_claim(session: Any, practice: Practice, control_number: str) -> str:
     immediately — deliberately, and faithfully, since production writes it
     alongside the outbox's pending marker, BEFORE the claim's state moves.
     """
-    from app.claims.routing import record_claim_route  # noqa: PLC0415
-    from app.repositories.postgres.claims import PostgresClaimRepository  # noqa: PLC0415
-    from tests.claims_fixtures import billing_snapshot, claim, line  # noqa: PLC0415
+    from app.claims.routing import record_claim_route
+    from app.repositories.postgres.claims import PostgresClaimRepository
+    from tests.claims_fixtures import billing_snapshot, claim, line
 
     record_claim_route(control_number, practice.practice_id, practice.clinician)
 
@@ -580,7 +580,7 @@ def _claim_event_count(engine: Engine, practice: Practice, claim_id: str) -> int
 
 
 def _control_number() -> str:
-    from tests.claims_pipeline_fakes import fresh_control_number  # noqa: PLC0415
+    from tests.claims_pipeline_fakes import fresh_control_number
 
     return str(fresh_control_number())
 
@@ -656,7 +656,7 @@ class TestPaymentIdempotence:
         worth knowing is that the table itself would refuse a second row
         whatever wrote it.
         """
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         payment_intent = f"pi_{uuid.uuid4().hex}"
         charge_id = _seed_charge(engine, practices.a, payment_intent)
@@ -691,7 +691,7 @@ class TestPaymentIdempotence:
         duplicate that changed nothing, quietly moving the timestamp anybody
         reconciling would reason from.
         """
-        from app.payments.reconcile import record_processed_event  # noqa: PLC0415
+        from app.payments.reconcile import record_processed_event
 
         payment_intent = f"pi_{uuid.uuid4().hex}"
         charge_id = _seed_charge(engine, practices.a, payment_intent)
@@ -895,7 +895,7 @@ class TestPaymentSignature:
     ) -> None:
         """A replay captured off the wire carries a real signature; the timestamp
         in it is what makes it refusable."""
-        from app.payments.reconcile import SIGNATURE_TOLERANCE_SECONDS  # noqa: PLC0415
+        from app.payments.reconcile import SIGNATURE_TOLERANCE_SECONDS
 
         payment_intent = f"pi_{uuid.uuid4().hex}"
         charge_id = _seed_charge(engine, practices.a, payment_intent)
@@ -1006,11 +1006,11 @@ class TestClaimIdempotence:
     def test_the_database_refuses_a_second_receipt_for_one_event_id(
         self, engine: Engine, practices: Practices, claims: ClaimRig
     ) -> None:
-        from app.models.claims import ClaimReceipt  # noqa: PLC0415
-        from app.repositories.postgres.claim_receipts import (  # noqa: PLC0415
+        from app.models.claims import ClaimReceipt
+        from app.repositories.postgres.claim_receipts import (
             PostgresClaimReceiptRepository,
         )
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         control = _control_number()
         claim_id = _seed_submitted_claim(engine, practices.a, control)
@@ -1105,7 +1105,7 @@ class TestClaimSignature:
     def test_a_stale_but_correctly_signed_delivery_never_reaches_the_claim(
         self, engine: Engine, practices: Practices, claims: ClaimRig
     ) -> None:
-        from app.claims.webhooks import SIGNATURE_TOLERANCE_SECONDS  # noqa: PLC0415
+        from app.claims.webhooks import SIGNATURE_TOLERANCE_SECONDS
 
         control = _control_number()
         claim_id = _seed_submitted_claim(engine, practices.a, control)
@@ -1165,7 +1165,7 @@ class TestClaimTenancy:
         an overwrite would send the FIRST practice's remittance to the second
         practice's ledger.
         """
-        from app.claims.routing import (  # noqa: PLC0415
+        from app.claims.routing import (
             record_claim_route,
             route_for_control_numbers,
         )

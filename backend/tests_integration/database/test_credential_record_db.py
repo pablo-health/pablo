@@ -83,7 +83,7 @@ _DOB = date(1984, 7, 22)
 @pytest.fixture(scope="module", autouse=True)
 def _encryption_key() -> Iterator[None]:
     """The credential identifiers use the same key the calendar tokens do."""
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     previous = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY")
     os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = base64.b64encode(os.urandom(32)).decode()
@@ -98,7 +98,7 @@ def _encryption_key() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -116,12 +116,12 @@ class _TenantSession:
     """A tenant session armed as one clinician, the way a request opens one."""
 
     def __init__(self, engine: Engine, schema: str, user_id: str) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_tenant_schema,
             _current_user_id,
             arm_current_user_id,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         self._schema_token = _current_tenant_schema.set(schema)
         self._uid_token = _current_user_id.set(user_id)
@@ -130,7 +130,7 @@ class _TenantSession:
         arm_current_user_id(self.session, user_id)
 
     def close(self) -> None:
-        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id
 
         self.session.close()
         _current_tenant_schema.reset(self._schema_token)
@@ -138,7 +138,7 @@ class _TenantSession:
 
 
 def _user(user_id: str) -> Any:
-    from app.models.user import User  # noqa: PLC0415
+    from app.models.user import User
 
     return User(
         id=user_id,
@@ -149,15 +149,15 @@ def _user(user_id: str) -> Any:
 
 
 def _audit_for(session: Session) -> Any:
-    from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
-    from app.services.audit_service import AuditService  # noqa: PLC0415
+    from app.repositories.postgres.audit import PostgresAuditRepository
+    from app.services.audit_service import AuditService
 
     return AuditService(PostgresAuditRepository(session))
 
 
 def _payer(session: Session, name: str, *, carveout_of: str | None = None) -> str:
     """A payer row, optionally a behavioural carve-out of another."""
-    from app.db.models import PayerRow  # noqa: PLC0415
+    from app.db.models import PayerRow
 
     now = datetime.now(UTC)
     row = PayerRow(
@@ -281,7 +281,7 @@ class TestClinicianIsolation:
     """One clinician's credential record is not another's, under a real role."""
 
     def test_b_cannot_read_as_licence(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow
 
         now = datetime.now(UTC)
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -323,8 +323,8 @@ class TestEncryptedIdentifiers:
     def test_plaintext_appears_in_no_column_and_a_read_is_audited(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import government_ids  # noqa: PLC0415
-        from app.db.models import AuditLogRow  # noqa: PLC0415
+        from app.credentialing import government_ids
+        from app.db.models import AuditLogRow
 
         user = _user(_CLINICIAN_A)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -399,7 +399,7 @@ class TestEncryptedIdentifiers:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """Otherwise a removed SSN leaves four of its digits behind."""
-        from app.credentialing import government_ids  # noqa: PLC0415
+        from app.credentialing import government_ids
 
         user = _user(_CLINICIAN_B)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
@@ -419,7 +419,7 @@ class TestEncryptedIdentifiers:
     def test_an_unknown_field_is_refused_rather_than_read_as_absent(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import government_ids  # noqa: PLC0415
+        from app.credentialing import government_ids
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -440,7 +440,7 @@ class TestParticipationStateMachine:
     def test_history_reconstructs_the_current_status(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import participation  # noqa: PLC0415
+        from app.credentialing import participation
 
         user = _user(_CLINICIAN_A)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -502,7 +502,7 @@ class TestParticipationStateMachine:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """Which is how a stalled application becomes visible at all."""
-        from app.credentialing import participation  # noqa: PLC0415
+        from app.credentialing import participation
 
         user = _user(_CLINICIAN_A)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -532,7 +532,7 @@ class TestParticipationStateMachine:
     def test_credentialed_but_not_contracted_is_answerable(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import participation  # noqa: PLC0415
+        from app.credentialing import participation
 
         user = _user(_CLINICIAN_B)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
@@ -573,7 +573,7 @@ class TestParticipationStateMachine:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """An SCA is agreed without verification, so it must not read as one."""
-        from app.credentialing import participation  # noqa: PLC0415
+        from app.credentialing import participation
 
         user = _user(_CLINICIAN_A)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -598,8 +598,8 @@ class TestParticipationStateMachine:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """AC 4. Two payer rows, two participations, no carve-out column."""
-        from app.credentialing import participation  # noqa: PLC0415
-        from app.db.models import PayerRow  # noqa: PLC0415
+        from app.credentialing import participation
+        from app.db.models import PayerRow
 
         user = _user(_CLINICIAN_A)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -637,7 +637,7 @@ class TestParticipationStateMachine:
     def test_an_unknown_status_is_refused_before_the_database_sees_it(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import participation  # noqa: PLC0415
+        from app.credentialing import participation
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -658,7 +658,7 @@ class TestDisclosureVersioning:
     """AC 10. A rewording adds a row; it never rewrites what she affirmed."""
 
     def test_two_versions_of_one_question_coexist(self, engine: Engine, tenant_schema: str) -> None:
-        from app.credentialing import disclosures  # noqa: PLC0415
+        from app.credentialing import disclosures
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -691,7 +691,7 @@ class TestDisclosureVersioning:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """ "Latest" is the highest version, not the most recent write."""
-        from app.credentialing import disclosures  # noqa: PLC0415
+        from app.credentialing import disclosures
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
         try:
@@ -719,7 +719,7 @@ class TestDisclosureVersioning:
             scoped.close()
 
     def test_an_unexplained_yes_is_refused(self, engine: Engine, tenant_schema: str) -> None:
-        from app.credentialing import disclosures  # noqa: PLC0415
+        from app.credentialing import disclosures
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -736,8 +736,8 @@ class TestDisclosureVersioning:
 
     def test_the_schema_refuses_it_too(self, engine: Engine, tenant_schema: str) -> None:
         """Defense in depth: the service check is not the only thing holding."""
-        from app.db.platform_models import CredentialDisclosureRow  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from app.db.platform_models import CredentialDisclosureRow
+        from sqlalchemy.exc import IntegrityError
 
         now = datetime.now(UTC)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -766,9 +766,9 @@ class TestClocksArePropsedNotWritten:
     """AC 11. The derivation offers a date; it never sets one."""
 
     def test_propose_changes_nothing(self, engine: Engine, tenant_schema: str) -> None:
-        from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import TaskRow  # noqa: PLC0415
-        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
+        from app.credentialing import clocks
+        from app.db.models import TaskRow
+        from app.db.platform_models import CredentialLicenseRow
 
         now = datetime.now(UTC)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_B)
@@ -829,8 +829,8 @@ class TestClocksArePropsedNotWritten:
 
     def test_the_soonest_licence_expiry_wins(self, engine: Engine, tenant_schema: str) -> None:
         """One clock, several licences: the first lapse is the one that matters."""
-        from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
+        from app.credentialing import clocks
+        from app.db.platform_models import CredentialLicenseRow
 
         now = datetime.now(UTC)
         user_id = str(uuid.uuid4())
@@ -874,8 +874,8 @@ class TestClocksArePropsedNotWritten:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """A revoked licence has a problem a renewal nudge is the wrong answer to."""
-        from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
+        from app.credentialing import clocks
+        from app.db.platform_models import CredentialLicenseRow
 
         now = datetime.now(UTC)
         user_id = str(uuid.uuid4())
@@ -905,8 +905,8 @@ class TestClocksArePropsedNotWritten:
 
 class TestOnePrimaryLicence:
     def test_a_second_primary_is_refused(self, engine: Engine, tenant_schema: str) -> None:
-        from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from app.db.platform_models import CredentialLicenseRow
+        from sqlalchemy.exc import IntegrityError
 
         now = datetime.now(UTC)
         user_id = str(uuid.uuid4())

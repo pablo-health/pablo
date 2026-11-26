@@ -78,8 +78,8 @@ def app(monkeypatch: pytest.MonkeyPatch) -> tuple[FastAPI, dict[str, Any]]:
     ``seen`` collects what the routes observed: the session they were handed
     and the backend pid their post-response statement ran on.
     """
-    from app.db import get_db_session, set_tenant_schema  # noqa: PLC0415
-    from app.db.middleware import DatabaseSessionMiddleware  # noqa: PLC0415
+    from app.db import get_db_session, set_tenant_schema
+    from app.db.middleware import DatabaseSessionMiddleware
 
     def _prepare(_request: object, session: Session) -> tuple[str, str | None]:
         set_tenant_schema(session, _SCHEMA)

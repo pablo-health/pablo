@@ -37,7 +37,7 @@ class TestTheTemplateCarriesTheAccess:
     def test_a_new_practice_has_all_of_it_and_the_access_pass_finds_nothing_to_change(
         self, engine: Engine
     ) -> None:
-        from app.db.practice_directory import (  # noqa: PLC0415
+        from app.db.practice_directory import (
             APPOINTMENT_COLUMNS,
             GRANT_COLUMNS,
             PATIENT_COLUMNS,

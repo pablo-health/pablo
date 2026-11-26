@@ -44,7 +44,7 @@ _CLINICIAN_B = "6f8c5f3d-be5b-5fca-d2b0-b07daf6a6f06"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -62,12 +62,12 @@ class _TenantSession:
     """A tenant session armed as one clinician, the way a request opens one."""
 
     def __init__(self, engine: Engine, schema: str, user_id: str) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_tenant_schema,
             _current_user_id,
             arm_current_user_id,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         self._schema_token = _current_tenant_schema.set(schema)
         self._uid_token = _current_user_id.set(user_id)
@@ -76,7 +76,7 @@ class _TenantSession:
         arm_current_user_id(self.session, user_id)
 
     def close(self) -> None:
-        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id
 
         self.session.close()
         _current_tenant_schema.reset(self._schema_token)
@@ -84,7 +84,7 @@ class _TenantSession:
 
 
 def _user(user_id: str) -> Any:
-    from app.models.user import User  # noqa: PLC0415
+    from app.models.user import User
 
     return User(
         id=user_id,
@@ -95,14 +95,14 @@ def _user(user_id: str) -> Any:
 
 
 def _audit_for(session: Session) -> Any:
-    from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
-    from app.services.audit_service import AuditService  # noqa: PLC0415
+    from app.repositories.postgres.audit import PostgresAuditRepository
+    from app.services.audit_service import AuditService
 
     return AuditService(PostgresAuditRepository(session))
 
 
 def _payer(session: Session, name: str) -> str:
-    from app.db.models import PayerRow  # noqa: PLC0415
+    from app.db.models import PayerRow
 
     now = datetime.now(UTC)
     row = PayerRow(
@@ -120,7 +120,7 @@ def _payer(session: Session, name: str) -> str:
 
 def _contracted_participation(session: Session, user_id: str, payer_name: str) -> Any:
     """A participation that reached ``contracted`` — a rate cannot exist before."""
-    from app.credentialing import participation  # noqa: PLC0415
+    from app.credentialing import participation
 
     payer_id = _payer(session, payer_name)
     return participation.transition(
@@ -133,7 +133,7 @@ def _contracted_participation(session: Session, user_id: str, payer_name: str) -
     )
 
 
-def _adjudicated_claim(  # noqa: PLR0913 — keyword-only claim fields, not a call-site burden
+def _adjudicated_claim(
     session: Session,
     *,
     user_id: str,
@@ -150,7 +150,7 @@ def _adjudicated_claim(  # noqa: PLR0913 — keyword-only claim fields, not a ca
     through claim assembly would drag in coverage, a patient chart and a
     billing profile without testing anything more about rates.
     """
-    from app.db.models import (  # noqa: PLC0415
+    from app.db.models import (
         ClaimLineRow,
         ClaimRow,
         PatientCoverageRow,
@@ -308,8 +308,8 @@ class TestProvisioning:
 
 class TestClinicianIsolation:
     def test_b_cannot_read_as_rates(self, engine: Engine, tenant_schema: str) -> None:
-        from app.credentialing import rates  # noqa: PLC0415
-        from app.db.platform_models import ContractedRateRow  # noqa: PLC0415
+        from app.credentialing import rates
+        from app.db.platform_models import ContractedRateRow
 
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -342,8 +342,8 @@ class TestTheSchemaRefusesAnAmbiguousRow:
     def test_a_fixed_rate_carrying_a_percent_is_refused(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.db.platform_models import ContractedRateRow  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from app.db.platform_models import ContractedRateRow
+        from sqlalchemy.exc import IntegrityError
 
         now = datetime.now(UTC)
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
@@ -373,7 +373,7 @@ class TestTheSchemaRefusesAnAmbiguousRow:
     def test_the_service_refuses_it_first_with_a_readable_message(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import rates  # noqa: PLC0415
+        from app.credentialing import rates
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -393,8 +393,8 @@ class TestTheSchemaRefusesAnAmbiguousRow:
             scoped.close()
 
     def test_one_rate_per_code_per_effective_date(self, engine: Engine, tenant_schema: str) -> None:
-        from app.credentialing import rates  # noqa: PLC0415
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from app.credentialing import rates
+        from sqlalchemy.exc import IntegrityError
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -427,7 +427,7 @@ class TestVarianceEndToEnd:
     def test_underpayment_surfaces_off_real_claims(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import rates  # noqa: PLC0415
+        from app.credentialing import rates
 
         user_id = str(uuid.uuid4())
         scoped = _TenantSession(engine, tenant_schema, user_id)
@@ -470,7 +470,7 @@ class TestVarianceEndToEnd:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """The boundary, through the query rather than the pure function."""
-        from app.credentialing import rates  # noqa: PLC0415
+        from app.credentialing import rates
 
         user_id = str(uuid.uuid4())
         scoped = _TenantSession(engine, tenant_schema, user_id)
@@ -503,7 +503,7 @@ class TestVarianceEndToEnd:
     def test_a_percent_rate_with_no_medicare_amount_is_not_computable(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import rates  # noqa: PLC0415
+        from app.credentialing import rates
 
         user_id = str(uuid.uuid4())
         scoped = _TenantSession(engine, tenant_schema, user_id)
@@ -552,7 +552,7 @@ class TestVarianceEndToEnd:
         self, engine: Engine, tenant_schema: str
     ) -> None:
         """The report is keyed on the claim's rendering provider, not the reader."""
-        from app.credentialing import rates  # noqa: PLC0415
+        from app.credentialing import rates
 
         mine = str(uuid.uuid4())
         theirs = str(uuid.uuid4())
@@ -608,8 +608,8 @@ class TestVarianceEndToEnd:
     def test_an_unadjudicated_claim_is_not_in_the_report(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import rates  # noqa: PLC0415
-        from app.db.models import ClaimRow  # noqa: PLC0415
+        from app.credentialing import rates
+        from app.db.models import ClaimRow
 
         user_id = str(uuid.uuid4())
         scoped = _TenantSession(engine, tenant_schema, user_id)

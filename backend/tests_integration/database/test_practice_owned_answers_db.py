@@ -205,7 +205,7 @@ def _chart(engine: Engine, schema: str, first: str, last: str, *clinicians: str)
     return patient_id
 
 
-def _legacy_answer(  # noqa: PLR0913 — one old row, every column named
+def _legacy_answer(
     engine: Engine,
     schema: str,
     user_id: str,

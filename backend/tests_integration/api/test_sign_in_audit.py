@@ -61,10 +61,10 @@ _USER_AGENT = "sign-in-audit-test"
 @contextmanager
 def _practice(engine: Engine, label: str) -> Iterator[SimpleNamespace]:
     """A practice provisioned the production way, with its platform row."""
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.db.platform_models import PracticeRow
+    from app.db.provisioning import create_practice_schema
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     # The RLS policies reference ``has_patient_access`` unqualified (it lives in
     # ``practice``), so warm the pool with a search_path that includes it.
@@ -111,7 +111,7 @@ def other_practice(engine: Engine) -> Iterator[SimpleNamespace]:
 @pytest.fixture(autouse=True)
 def _fresh_memo() -> Iterator[None]:
     """Each test starts as a freshly started instance would."""
-    from app.auth.sign_in_audit import _memo  # noqa: PLC0415
+    from app.auth.sign_in_audit import _memo
 
     _memo.clear()
     yield
@@ -127,13 +127,13 @@ def _clinician(
     The user's id and the provider's uid are different values, as they are in
     production.
     """
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         UserIdentityRow,
     )
-    from app.utcnow import utc_now  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.utcnow import utc_now
+    from sqlalchemy.orm import Session
 
     user_id = str(uuid.uuid4())
     uid = f"fb{uuid.uuid4().hex[:26]}"
@@ -185,7 +185,7 @@ def _sign_in_rows(engine: Engine, schema: str, user_id: str) -> list[dict[str, A
 _PASSWORD = {"sign_in_provider": "password", "sign_in_second_factor": "totp"}
 
 
-def _request_as(  # noqa: PLR0913 -- the token is the thing each test varies
+def _request_as(
     app: FastAPI,
     uid: str,
     email: str,
@@ -202,8 +202,8 @@ def _request_as(  # noqa: PLR0913 -- the token is the thing each test varies
     ``issued_at`` stands in for a refresh: a refreshed token is issued later
     but keeps the ``auth_time`` of the sign-in it came from.
     """
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from fastapi.testclient import TestClient
 
     identity = VerifiedIdentity(
         provider="firebase",
@@ -236,7 +236,7 @@ def _request_as(  # noqa: PLR0913 -- the token is the thing each test varies
     return response.status_code, response.json()
 
 
-def _request_from_web_app_server(  # noqa: PLR0913 -- the browser token it was minted from
+def _request_from_web_app_server(
     app: FastAPI,
     uid: str,
     email: str,
@@ -280,7 +280,7 @@ def _sign_in_sources(engine: Engine, schema: str, user_id: str) -> list[tuple[st
 
 
 def _sign_in_key(uid: str, auth_time: int) -> str:
-    from app.auth.idle_session import session_log_key  # noqa: PLC0415
+    from app.auth.idle_session import session_log_key
 
     key = session_log_key({"uid": uid, "auth_time": auth_time})
     assert key is not None
@@ -321,7 +321,7 @@ class TestSignInIsRecordedByTheBackend:
     def test_a_token_refresh_writes_nothing(
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
     ) -> None:
-        from app.auth.sign_in_audit import _memo  # noqa: PLC0415
+        from app.auth.sign_in_audit import _memo
 
         with _clinician(engine, own_practice) as user:
             signed_in_at = _now() - 600
@@ -418,13 +418,13 @@ class TestSignInIsRecordedByTheBackend:
         ``auth_time``), so if its request reaches the backend first, it writes
         the sign-in's one row. That row must still name the user's device.
         """
-        from app.request_context import (  # noqa: PLC0415
+        from app.request_context import (
             FORWARD_AUTH_HEADER,
             FORWARDED_CLIENT_IP_HEADER,
             FORWARDED_CLIENT_UA_HEADER,
         )
-        from app.settings import get_settings  # noqa: PLC0415
-        from pydantic import SecretStr  # noqa: PLC0415
+        from app.settings import get_settings
+        from pydantic import SecretStr
 
         secret = uuid.uuid4().hex
         configured = get_settings().model_copy(
@@ -457,13 +457,13 @@ class TestSignInIsRecordedByTheBackend:
     def test_forwarded_headers_without_the_secret_are_ignored(
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
     ) -> None:
-        from app.request_context import (  # noqa: PLC0415
+        from app.request_context import (
             FORWARD_AUTH_HEADER,
             FORWARDED_CLIENT_IP_HEADER,
             FORWARDED_CLIENT_UA_HEADER,
         )
-        from app.settings import get_settings  # noqa: PLC0415
-        from pydantic import SecretStr  # noqa: PLC0415
+        from app.settings import get_settings
+        from pydantic import SecretStr
 
         configured = get_settings().model_copy(
             update={"frontend_forward_secret": SecretStr(uuid.uuid4().hex)}
@@ -498,7 +498,7 @@ class TestSignInIsRecordedByTheBackend:
         row is written twice under one id, so the second flush breaks the
         primary key.
         """
-        from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
+        from app.repositories.postgres.audit import PostgresAuditRepository
 
         real_append = PostgresAuditRepository.append
 
@@ -532,9 +532,9 @@ class TestSignInIsRecordedByTheBackend:
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
     ) -> None:
         """The backend refuses an address that is not on the allowlist before creating anything."""
-        from app.db.platform_models import UserIdentityRow  # noqa: PLC0415
-        from app.settings import get_settings  # noqa: PLC0415
-        from sqlalchemy.orm import Session  # noqa: PLC0415
+        from app.db.platform_models import UserIdentityRow
+        from app.settings import get_settings
+        from sqlalchemy.orm import Session
 
         restricted = get_settings().model_copy(update={"restrict_signups": True})
         uid = f"fb{uuid.uuid4().hex[:26]}"

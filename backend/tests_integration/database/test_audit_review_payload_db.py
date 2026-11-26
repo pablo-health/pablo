@@ -81,7 +81,7 @@ def _audit_update_with_changes(
     PHI-free contract has to cover nested dicts, so build the entry
     directly (same defaults the harness uses).
     """
-    from datetime import UTC, datetime  # noqa: PLC0415
+    from datetime import UTC, datetime
 
     h.audit_repo.append(
         AuditLogEntry(

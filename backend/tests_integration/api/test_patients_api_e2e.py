@@ -100,7 +100,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
     tracked separately — but reproducing the pentest's FK finding
     requires getting past the policy creation step the way prod does.
     """
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -124,7 +124,7 @@ def e2e_user_id() -> str:
 
 @pytest.fixture
 def e2e_user(e2e_user_id: str):
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=e2e_user_id,
@@ -137,7 +137,7 @@ def e2e_user(e2e_user_id: str):
 
 
 @pytest.fixture
-def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI deps
+def e2e_client(
     fastapi_app: FastAPI,
     engine: Engine,
     tenant_schema: str,
@@ -160,8 +160,8 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
         production dependency on the same line in
         ``auth.service.get_tenant_context``.
     """
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -170,8 +170,8 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import get_db_session  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import get_db_session
+    from fastapi.testclient import TestClient
 
     identity = VerifiedIdentity(
         provider="test",

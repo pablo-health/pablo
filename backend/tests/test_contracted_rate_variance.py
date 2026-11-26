@@ -151,7 +151,7 @@ class TestEffectiveDateBoundary:
         assert _line(14500, [rate]).status is VarianceStatus.MATCH
 
     def test_the_day_before_is_not(self) -> None:
-        from datetime import timedelta  # noqa: PLC0415
+        from datetime import timedelta
 
         rate = _fixed(14500, effective=_SERVICE + timedelta(days=1))
         assert _line(14500, [rate]).status is VarianceStatus.NO_RATE_ON_FILE
@@ -161,7 +161,7 @@ class TestEffectiveDateBoundary:
         assert _line(14500, [rate]).status is VarianceStatus.MATCH
 
     def test_the_day_after_the_end_date_is_not(self) -> None:
-        from datetime import timedelta  # noqa: PLC0415
+        from datetime import timedelta
 
         rate = _fixed(14500, effective=date(2026, 1, 1), end=_SERVICE - timedelta(days=1))
         assert _line(14500, [rate]).status is VarianceStatus.NO_RATE_ON_FILE

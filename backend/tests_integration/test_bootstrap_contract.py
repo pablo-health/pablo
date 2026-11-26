@@ -53,7 +53,7 @@ def test_the_placeholder_database_url_never_reaches_a_real_run() -> None:
     ``conftest.pytest_configure`` did not fire and the suite is pointed at a
     database that does not exist.
     """
-    from tests.placeholder_db import database_url_is_placeholder  # noqa: PLC0415
+    from tests.placeholder_db import database_url_is_placeholder
 
     assert not database_url_is_placeholder(), (
         "the integration suite is running against the unit suite's placeholder "

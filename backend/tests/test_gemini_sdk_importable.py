@@ -18,7 +18,7 @@ from __future__ import annotations
 
 def test_google_genai_sdk_is_installed() -> None:
     """The vendored SDK every gateway depends on must be available."""
-    from google import genai  # noqa: PLC0415 — the test is exactly this import
+    from google import genai
 
     # Touch a top-level symbol so a partial install / namespace-package
     # collision can't slip through.

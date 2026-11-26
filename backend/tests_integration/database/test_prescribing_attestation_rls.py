@@ -63,7 +63,7 @@ def _ruleset():  # type: ignore[no-untyped-def]
       applicability gating (it must NOT appear).
     """
 
-    from app.rules.models import AppliesWhen, RuleItem, Ruleset  # noqa: PLC0415
+    from app.rules.models import AppliesWhen, RuleItem, Ruleset
 
     return Ruleset(
         id="TEST-RX",
@@ -104,7 +104,7 @@ def _ruleset():  # type: ignore[no-untyped-def]
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -149,12 +149,12 @@ def patient_and_grant(engine: Engine, tenant_schema: str) -> tuple[str, str]:
 
 
 def _session(engine: Engine, tenant_schema: str, user_id: str):  # type: ignore[no-untyped-def]
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_tenant_schema,
         _current_user_id,
         arm_current_user_id,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     schema_token = _current_tenant_schema.set(tenant_schema)
     uid_token = _current_user_id.set(user_id)
@@ -165,7 +165,7 @@ def _session(engine: Engine, tenant_schema: str, user_id: str):  # type: ignore[
 
 
 def _close(session, schema_token, uid_token):  # type: ignore[no-untyped-def]
-    from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+    from app.db import _current_tenant_schema, _current_user_id
 
     session.close()
     _current_tenant_schema.reset(schema_token)
@@ -177,7 +177,7 @@ def encounter(
     engine: Engine, tenant_schema: str, patient_and_grant: tuple[str, str]
 ) -> tuple[str, str]:
     """A fresh open Schedule-II stimulant encounter. Returns (encounter_id, rx_id)."""
-    from app.db.models import PrescribingEncounterRow, PrescriptionRow  # noqa: PLC0415
+    from app.db.models import PrescribingEncounterRow, PrescriptionRow
 
     patient_id, clinician_a = patient_and_grant
     enc_id, rx_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -224,7 +224,7 @@ def encounter(
 
 
 def _load(session, enc_id: str, rx_id: str):  # type: ignore[no-untyped-def]
-    from app.db.models import PrescribingEncounterRow, PrescriptionRow  # noqa: PLC0415
+    from app.db.models import PrescribingEncounterRow, PrescriptionRow
 
     enc = session.get(PrescribingEncounterRow, enc_id)
     rx = session.get(PrescriptionRow, rx_id)
@@ -239,7 +239,7 @@ class TestSyncComputesLedgerFromEngine:
         patient_and_grant: tuple[str, str],
         encounter: tuple[str, str],
     ) -> None:
-        from app.prescribing.attestation import sync_checklist  # noqa: PLC0415
+        from app.prescribing.attestation import sync_checklist
 
         _, clinician_a = patient_and_grant
         enc_id, rx_id = encounter
@@ -272,7 +272,7 @@ class TestEvidenceBindingReachesSatisfied:
         patient_and_grant: tuple[str, str],
         encounter: tuple[str, str],
     ) -> None:
-        from app.prescribing.attestation import (  # noqa: PLC0415
+        from app.prescribing.attestation import (
             bind_evidence,
             sync_checklist,
         )
@@ -311,7 +311,7 @@ class TestEvidenceBindingReachesSatisfied:
         patient_and_grant: tuple[str, str],
         encounter: tuple[str, str],
     ) -> None:
-        from app.prescribing.attestation import bind_evidence  # noqa: PLC0415
+        from app.prescribing.attestation import bind_evidence
 
         _, clinician_a = patient_and_grant
         enc_id, rx_id = encounter
@@ -335,7 +335,7 @@ class TestApplicabilityChangeSoftDeletes:
         patient_and_grant: tuple[str, str],
         encounter: tuple[str, str],
     ) -> None:
-        from app.prescribing.attestation import live_checklist, sync_checklist  # noqa: PLC0415
+        from app.prescribing.attestation import live_checklist, sync_checklist
 
         _, clinician_a = patient_and_grant
         enc_id, rx_id = encounter
@@ -365,11 +365,11 @@ class TestFinalizedEncounterIsFrozen:
         patient_and_grant: tuple[str, str],
         encounter: tuple[str, str],
     ) -> None:
-        from app.prescribing.attestation import (  # noqa: PLC0415
+        from app.prescribing.attestation import (
             bind_evidence,
             sync_checklist,
         )
-        from app.prescribing.integrity import EncounterImmutableError  # noqa: PLC0415
+        from app.prescribing.integrity import EncounterImmutableError
 
         _, clinician_a = patient_and_grant
         enc_id, rx_id = encounter
@@ -394,7 +394,7 @@ class TestLedgerRlsIsolation:
         patient_and_grant: tuple[str, str],
         encounter: tuple[str, str],
     ) -> None:
-        from app.prescribing.attestation import live_checklist, sync_checklist  # noqa: PLC0415
+        from app.prescribing.attestation import live_checklist, sync_checklist
 
         _patient_id, clinician_a = patient_and_grant
         enc_id, rx_id = encounter
@@ -424,7 +424,7 @@ class TestLedgerRlsIsolation:
         patient_and_grant: tuple[str, str],
         encounter: tuple[str, str],
     ) -> None:
-        from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+        from sqlalchemy.exc import ProgrammingError
 
         patient_id, _ = patient_and_grant
         enc_id, _rx = encounter

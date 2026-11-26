@@ -68,7 +68,7 @@ _USER_B = "2f8e6d5c-4b3a-4291-8c7d-6e5f4a3b2c10"
 
 
 def _provision_schema(engine: Engine, label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     # The RLS policies reference ``has_patient_access`` unqualified (it lives in
     # ``practice``), so warm the pool with a search_path that includes it before
@@ -100,7 +100,7 @@ def tenant_b_schema(engine: Engine) -> Iterator[str]:
 
 
 def _user(user_id: str, email: str):
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=user_id,
@@ -125,7 +125,7 @@ def tenant_a_client(
     Gemini call is ever made. This client is for the *uploader* side; the worker
     is invoked separately (it must scope itself, not inherit this).
     """
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -134,10 +134,10 @@ def tenant_a_client(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.routes.sessions import get_note_generation_service  # noqa: PLC0415
-    from app.services.note_generation_service import MockNoteGenerationService  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.routes.sessions import get_note_generation_service
+    from app.services.note_generation_service import MockNoteGenerationService
+    from fastapi.testclient import TestClient
 
     user_a = _user(_USER_A, "async-a@example.com")
 
@@ -247,7 +247,7 @@ class TestSoapWorkerTenantScoping:
     """The worker generates the note into the *correct* tenant schema and
     nowhere else — the load-bearing cross-tenant proof."""
 
-    def test_worker_writes_note_into_tenant_a_only(  # noqa: PLR0913 — mirrors FastAPI deps
+    def test_worker_writes_note_into_tenant_a_only(
         self,
         tenant_a_client: TestClient,
         fastapi_app: FastAPI,
@@ -256,7 +256,7 @@ class TestSoapWorkerTenantScoping:
         tenant_b_schema: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from fastapi.testclient import TestClient
 
         patient_id = _seed_patient(tenant_a_client)
         upload = tenant_a_client.post(
@@ -275,7 +275,7 @@ class TestSoapWorkerTenantScoping:
         # Invoke the worker the way Cloud Tasks will: SA-authed (override the
         # invoker gate), schema resolved from user_id (not a request token). The
         # worker must scope itself — it does NOT see tenant_a_client's overrides.
-        from app.auth.service import require_cloud_tasks_invoker  # noqa: PLC0415
+        from app.auth.service import require_cloud_tasks_invoker
 
         monkeypatch.setattr(
             "app.services.session_generation_worker.resolve_tenant_schema_for_user",
@@ -312,10 +312,10 @@ class TestSoapWorkerFailurePath:
         tenant_a_schema: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from app.auth.service import require_cloud_tasks_invoker  # noqa: PLC0415
-        from app.routes.sessions import get_note_generation_service  # noqa: PLC0415
-        from app.services.note_generation_service import NoteGenerationService  # noqa: PLC0415
-        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from app.auth.service import require_cloud_tasks_invoker
+        from app.routes.sessions import get_note_generation_service
+        from app.services.note_generation_service import NoteGenerationService
+        from fastapi.testclient import TestClient
 
         patient_id = _seed_patient(tenant_a_client)
         upload = tenant_a_client.post(

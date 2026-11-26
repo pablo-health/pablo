@@ -72,13 +72,13 @@ class _Seed:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice with three clinicians, all mapped to it as members."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -173,8 +173,8 @@ def as_clinician(
     fastapi_app: FastAPI, tenant_schema: str, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[dict[str, str]]:
     """The real route stack, signed in as whichever clinician ``acting["id"]`` names."""
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -183,8 +183,8 @@ def as_clinician(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.models import User  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.models import User
 
     acting = {"id": _AWAY}
 
@@ -236,7 +236,7 @@ def as_clinician(
 
 @pytest.fixture
 def client(fastapi_app: FastAPI, as_clinician: dict[str, str]) -> TestClient:
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from fastapi.testclient import TestClient
 
     return TestClient(fastapi_app)
 
@@ -397,9 +397,9 @@ class TestTheWindow:
         _answer(client, as_clinician, period["id"], "accept")
 
         # No preference saved: the clinician's calendar is the default zone's.
-        from zoneinfo import ZoneInfo  # noqa: PLC0415
+        from zoneinfo import ZoneInfo
 
-        from app.models.user import UserPreferences  # noqa: PLC0415
+        from app.models.user import UserPreferences
 
         zone = ZoneInfo(UserPreferences().timezone)
         returns = date.fromisoformat(period["return_date"])

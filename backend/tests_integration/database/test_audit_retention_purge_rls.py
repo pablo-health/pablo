@@ -65,7 +65,7 @@ _NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 
 
 def _make_schema(engine: Engine, engine_label: str) -> str:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -163,7 +163,7 @@ class TestTheCronCanReachExpiredRows:
         """``_delete_expired`` arms no identity GUC, so the policy's
         ``USING`` clause matches nothing and the DELETE is a silent
         no-op. The job reports success having purged zero rows."""
-        from app.jobs.audit_retention_cron import _delete_expired  # noqa: PLC0415
+        from app.jobs.audit_retention_cron import _delete_expired
 
         _seed(
             engine,
@@ -188,7 +188,7 @@ class TestTheCronCanReachExpiredRows:
         there is no identity the purge could arm that would reach it.
         These rows would outlive their retention window permanently.
         """
-        from app.jobs.audit_retention_cron import _delete_expired  # noqa: PLC0415
+        from app.jobs.audit_retention_cron import _delete_expired
 
         _seed(
             engine,
@@ -207,7 +207,7 @@ class TestTheCronCanReachExpiredRows:
         self, engine: Engine, tenant_schema: str, actor_type: str
     ) -> None:
         """A public-booking row and a cron's own row expire like any other."""
-        from app.jobs.audit_retention_cron import _delete_expired  # noqa: PLC0415
+        from app.jobs.audit_retention_cron import _delete_expired
 
         _seed(
             engine,
@@ -228,7 +228,7 @@ class TestTheCronCanReachExpiredRows:
         "none", which corroborates the empty purge rather than
         contradicting it.
         """
-        from app.jobs.audit_retention_cron import _count_expired  # noqa: PLC0415
+        from app.jobs.audit_retention_cron import _count_expired
 
         _seed(
             engine,
@@ -250,7 +250,7 @@ class TestThePurgeStaysWithinItsBounds:
     """Reaching expired rows must not turn into reaching every row."""
 
     def test_unexpired_rows_survive(self, engine: Engine, tenant_schema: str) -> None:
-        from app.jobs.audit_retention_cron import _delete_expired  # noqa: PLC0415
+        from app.jobs.audit_retention_cron import _delete_expired
 
         _seed(
             engine,
@@ -274,7 +274,7 @@ class TestThePurgeStaysWithinItsBounds:
         """The job fans across schemas one at a time; whatever makes the
         DELETE able to see rows must not make it able to see a
         neighbour's."""
-        from app.jobs.audit_retention_cron import _delete_expired  # noqa: PLC0415
+        from app.jobs.audit_retention_cron import _delete_expired
 
         for schema in (tenant_schema, other_tenant_schema):
             _seed(
@@ -293,7 +293,7 @@ class TestThePurgeStaysWithinItsBounds:
         """Whatever lets the purge see rows must not double as a way to
         delete them without the purge GUC. The trigger is the other
         half of the contract and has to keep firing."""
-        from sqlalchemy.exc import (  # noqa: PLC0415
+        from sqlalchemy.exc import (
             IntegrityError,
             InternalError,
             ProgrammingError,

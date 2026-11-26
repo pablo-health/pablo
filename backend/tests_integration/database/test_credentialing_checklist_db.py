@@ -77,7 +77,7 @@ _NEW_IDENTIFIER_COLUMNS = (
 
 @pytest.fixture(scope="module", autouse=True)
 def _encryption_key() -> Iterator[None]:
-    from app.settings import get_settings  # noqa: PLC0415
+    from app.settings import get_settings
 
     previous = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY")
     os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = base64.b64encode(os.urandom(32)).decode()
@@ -122,7 +122,7 @@ def _clear_platform_record(engine: Engine, *user_ids: str) -> None:
 
 @pytest.fixture
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -145,12 +145,12 @@ class _TenantSession:
     """A tenant session armed as one clinician, the way a request opens one."""
 
     def __init__(self, engine: Engine, schema: str, user_id: str) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_tenant_schema,
             _current_user_id,
             arm_current_user_id,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         self._schema_token = _current_tenant_schema.set(schema)
         self._uid_token = _current_user_id.set(user_id)
@@ -159,7 +159,7 @@ class _TenantSession:
         arm_current_user_id(self.session, user_id)
 
     def close(self) -> None:
-        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id
 
         self.session.close()
         _current_tenant_schema.reset(self._schema_token)
@@ -167,7 +167,7 @@ class _TenantSession:
 
 
 def _user(user_id: str) -> Any:
-    from app.models.user import User  # noqa: PLC0415
+    from app.models.user import User
 
     return User(
         id=user_id,
@@ -178,8 +178,8 @@ def _user(user_id: str) -> Any:
 
 
 def _audit_for(session: Session) -> Any:
-    from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
-    from app.services.audit_service import AuditService  # noqa: PLC0415
+    from app.repositories.postgres.audit import PostgresAuditRepository
+    from app.services.audit_service import AuditService
 
     return AuditService(PostgresAuditRepository(session))
 
@@ -257,7 +257,7 @@ class TestTheSchemaEnforcesTheMirrorRule:
         Here it is the other way round, and the check is what makes that a
         property of the record rather than of whichever service wrote it.
         """
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -279,8 +279,8 @@ class TestTheSchemaEnforcesTheMirrorRule:
 
     def test_a_confirmation_is_one_row_per_field(self, engine: Engine, tenant_schema: str) -> None:
         """Re-confirming updates. The question is "is this right now"."""
-        from app.credentialing import confirmations  # noqa: PLC0415
-        from app.db.platform_models import CredentialConfirmationRow  # noqa: PLC0415
+        from app.credentialing import confirmations
+        from app.db.platform_models import CredentialConfirmationRow
 
         scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -322,7 +322,7 @@ class TestTierOneCompletesAgainstTheTenantRecord:
         herself in the same schema, sees none of it — so "Tier 1 is finished"
         is a fact about a clinician in a practice, not about the deployment.
         """
-        from app.credentialing import checklist, status  # noqa: PLC0415
+        from app.credentialing import checklist, status
 
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -349,7 +349,7 @@ class TestTierOneCompletesAgainstTheTenantRecord:
     def test_one_clinicians_confirmations_are_not_the_others(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.credentialing import confirmations  # noqa: PLC0415
+        from app.credentialing import confirmations
 
         scoped_a = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
         try:
@@ -376,12 +376,12 @@ class TestTierOneCompletesAgainstTheTenantRecord:
 
 def _seed_tier_one(session: Session, user_id: str, practice_id: str) -> None:
     """Every required Tier-1 answer, written the way the routes write them."""
-    from app.credentialing import government_ids  # noqa: PLC0415
-    from app.db.models import (  # noqa: PLC0415
+    from app.credentialing import government_ids
+    from app.db.models import (
         ComplianceDocumentRow,
         PayerRow,
     )
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         CredentialBankAccountRow,
         CredentialLiabilityPolicyRow,
         CredentialLicenseRow,

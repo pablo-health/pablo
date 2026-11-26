@@ -53,7 +53,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def provisioned_schema(engine: Engine) -> Iterator[str]:
     """A tenant built the other way: template DDL + ``enable_rls_on_schema``."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -83,7 +83,7 @@ def migrated_schema(engine: Engine) -> Iterator[str]:
     policy came from the migration path, enforcing, and comparable to one
     whose policy came from the provisioning path.
     """
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     module = _load_migration("b2d6f83a4c19_audit_logs_actor_split_policy.py")
     owner_read = _load_migration("a7e3c5d19b42_audit_logs_owner_reads_client_activity.py")

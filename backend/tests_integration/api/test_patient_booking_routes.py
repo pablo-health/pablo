@@ -113,7 +113,7 @@ def _arming_here_stays_here() -> Iterator[None]:
     thread, which sets the process's request ContextVars. Those are this
     module's business and must not be the next module's starting principal.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -136,11 +136,11 @@ def _seed_owner_timezone(engine: Engine) -> None:
     unrelated default, and would silently become a UTC-only exercise if that
     default ever moved to UTC.
     """
-    from app.models.user import UserPreferences  # noqa: PLC0415
-    from app.repositories.postgres.user import (  # noqa: PLC0415
+    from app.models.user import UserPreferences
+    from app.repositories.postgres.user import (
         PostgresUserRepository,
     )
-    from sqlalchemy.orm import (  # noqa: PLC0415
+    from sqlalchemy.orm import (
         Session as OrmSession,
     )
 
@@ -156,19 +156,19 @@ def _seed_working_hours(engine: Engine) -> None:
     lives in a JSONB ``params`` column, and a hand-written INSERT here would be
     a second, silently-drifting copy of that schema.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         arm_current_user_id,
         set_tenant_schema,
     )
-    from app.repositories.postgres.availability_rule import (  # noqa: PLC0415
+    from app.repositories.postgres.availability_rule import (
         PostgresAvailabilityRuleRepository,
     )
-    from app.scheduling_engine.models.availability import (  # noqa: PLC0415
+    from app.scheduling_engine.models.availability import (
         AvailabilityRule,
         EnforcementLevel,
         RuleType,
     )
-    from sqlalchemy.orm import (  # noqa: PLC0415
+    from sqlalchemy.orm import (
         Session as OrmSession,
     )
 
@@ -209,14 +209,14 @@ def _seed_working_hours(engine: Engine) -> None:
 @pytest.fixture(scope="module")
 def practice(engine: Engine) -> Iterator[dict[str, Any]]:
     """A provisioned practice with an owner, two patients, hours and a type."""
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         PlatformUserRow,
         PracticeRow,
     )
-    from app.db.provisioning import (  # noqa: PLC0415
+    from app.db.provisioning import (
         create_practice_schema,
     )
-    from sqlalchemy.orm import (  # noqa: PLC0415
+    from sqlalchemy.orm import (
         Session as OrmSession,
     )
 
@@ -253,7 +253,7 @@ def practice(engine: Engine) -> Iterator[dict[str, Any]]:
     # As the authenticated path does, with the same call — so a change that
     # stops recording the owner takes these tests down rather than leaving them
     # green over a fixture that had already decided the answer.
-    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+    from app.db.practice_owner import record_owner_on_sign_in
 
     assert record_owner_on_sign_in(_PRACTICE_ID, f"{_PRACTICE_ID}@example.test", _CLINICIAN)
     with OrmSession(bind=engine) as s:
@@ -306,10 +306,10 @@ def practice(engine: Engine) -> Iterator[dict[str, Any]]:
 
 def _set_policy(engine: Engine, **fields: Any) -> None:
     """Write the practice's scheduling policy, upserting the singleton row."""
-    from app.scheduling_engine.services.scheduling_policy import (  # noqa: PLC0415
+    from app.scheduling_engine.services.scheduling_policy import (
         update_policy,
     )
-    from sqlalchemy.orm import (  # noqa: PLC0415
+    from sqlalchemy.orm import (
         Session as OrmSession,
     )
 
@@ -331,16 +331,16 @@ def _client(  # type: ignore[no-untyped-def]
     resolver produces — including ``auth_strength``, which the write routes
     enforce.
     """
-    from app.auth.patient_context import (  # noqa: PLC0415
+    from app.auth.patient_context import (
         AuthStrength,
         get_patient_context,
     )
-    from app.auth.route_access import (  # noqa: PLC0415
+    from app.auth.route_access import (
         subscription_exempt,
     )
-    from app.main import app  # noqa: PLC0415
+    from app.main import app
 
-    from tests_integration.api._patient_client import (  # noqa: PLC0415
+    from tests_integration.api._patient_client import (
         armed_patient_context,
         fresh_context_client,
     )
@@ -377,17 +377,17 @@ def _seed_appointment(engine: Engine, patient_id: str, start: datetime) -> str:
     more to the point, a fixture that writes rows the application could not
     produce is testing against a database state that cannot occur.
     """
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         arm_current_user_id,
         set_tenant_schema,
     )
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+    from app.repositories.postgres.appointment import (
         PostgresAppointmentRepository,
     )
-    from app.scheduling_engine.services.scheduling import (  # noqa: PLC0415
+    from app.scheduling_engine.services.scheduling import (
         SchedulingService,
     )
-    from sqlalchemy.orm import (  # noqa: PLC0415
+    from sqlalchemy.orm import (
         Session as OrmSession,
     )
 
@@ -683,16 +683,16 @@ def test_a_blocked_day_cannot_be_booked(
     likely to be tested by someone who read the slots endpoint and then guessed
     a time.
     """
-    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-    from app.repositories.postgres.availability_rule import (  # noqa: PLC0415
+    from app.db import arm_current_user_id, set_tenant_schema
+    from app.repositories.postgres.availability_rule import (
         PostgresAvailabilityRuleRepository,
     )
-    from app.scheduling_engine.models.availability import (  # noqa: PLC0415
+    from app.scheduling_engine.models.availability import (
         AvailabilityRule,
         EnforcementLevel,
         RuleType,
     )
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession
 
     _set_policy(
         engine,
@@ -1109,12 +1109,12 @@ def test_a_clinician_cancellation_is_never_the_patients_late_one(
     to nobody. Before these columns it was the same row as a patient
     cancelling an hour beforehand.
     """
-    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+    from app.db import arm_current_user_id, set_tenant_schema
+    from app.repositories.postgres.appointment import (
         PostgresAppointmentRepository,
     )
-    from app.scheduling_engine.services.scheduling import SchedulingService  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.scheduling_engine.services.scheduling import SchedulingService
+    from sqlalchemy.orm import Session as OrmSession
 
     _open_policy(engine)
     _clear_appointments(engine)
@@ -1216,7 +1216,7 @@ def test_a_client_cancellation_raises_the_open_slot_event(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
     """The slot the client gave back is announced, and recorded, by id alone."""
-    from app.scheduling_engine.services.open_slots import OpenSlot, subscribe  # noqa: PLC0415
+    from app.scheduling_engine.services.open_slots import OpenSlot, subscribe
 
     _open_policy(engine)
     _clear_appointments(engine)
@@ -1250,13 +1250,13 @@ def test_a_clinician_cancellation_raises_no_open_slot_event(
     engine: Engine, practice: dict[str, Any]
 ) -> None:
     """The clinician's own cancel is theirs to fill; nothing is announced."""
-    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
-    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+    from app.db import arm_current_user_id, set_tenant_schema
+    from app.repositories.postgres.appointment import (
         PostgresAppointmentRepository,
     )
-    from app.scheduling_engine.services.open_slots import open_slot_for  # noqa: PLC0415
-    from app.scheduling_engine.services.scheduling import SchedulingService  # noqa: PLC0415
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from app.scheduling_engine.services.open_slots import open_slot_for
+    from app.scheduling_engine.services.scheduling import SchedulingService
+    from sqlalchemy.orm import Session
 
     _clear_appointments(engine)
     appointment_id = _seed_appointment(engine, practice["a"], _at(10))
@@ -1277,7 +1277,7 @@ def test_a_client_moving_their_appointment_raises_no_open_slot_event(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
     """A move gives up one time for another; only an outright cancel opens one."""
-    from app.scheduling_engine.services.open_slots import OpenSlot, subscribe  # noqa: PLC0415
+    from app.scheduling_engine.services.open_slots import OpenSlot, subscribe
 
     _open_policy(engine)
     _clear_appointments(engine)
@@ -1795,17 +1795,17 @@ def test_a_single_factor_principal_may_read_the_options(
 
 def _seed_outside_session(engine: Engine, start: datetime, *, answer: str = "open") -> None:
     """A session on a calendar the clinician follows, through the repository."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         arm_current_user_id,
         set_tenant_schema,
     )
-    from app.repositories.external_calendar_event import (  # noqa: PLC0415
+    from app.repositories.external_calendar_event import (
         ExternalCalendarEvent,
     )
-    from app.repositories.postgres.external_calendar_event import (  # noqa: PLC0415
+    from app.repositories.postgres.external_calendar_event import (
         PostgresExternalCalendarEventRepository,
     )
-    from sqlalchemy.orm import (  # noqa: PLC0415
+    from sqlalchemy.orm import (
         Session as OrmSession,
     )
 
@@ -1869,9 +1869,9 @@ def test_google_busy_time_is_not_offered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Google stands in at the service boundary; the route builds the rest."""
-    from app.calendar_providers.provider import BusyWindow  # noqa: PLC0415
-    from app.services.busy_time import FREE_BUSY_CACHE  # noqa: PLC0415
-    from app.services.google_calendar_service import (  # noqa: PLC0415
+    from app.calendar_providers.provider import BusyWindow
+    from app.services.busy_time import FREE_BUSY_CACHE
+    from app.services.google_calendar_service import (
         BusyCalendars,
         GoogleCalendarService,
     )
@@ -1922,7 +1922,7 @@ class _FakeGoogle:
     """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> None:
-        from app.services.google_calendar_service import (  # noqa: PLC0415
+        from app.services.google_calendar_service import (
             GoogleCalendarService,
         )
 
@@ -2117,7 +2117,7 @@ def test_a_calendar_outage_never_fails_a_cancellation(
     patient_a_client: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services.google_calendar_service import (  # noqa: PLC0415
+    from app.services.google_calendar_service import (
         GoogleCalendarService,
     )
 
@@ -2146,7 +2146,7 @@ def test_a_failure_around_the_push_never_fails_the_booking(
     The booking is already in the diary by then, so a 5xx would tell the
     client it was not.
     """
-    from app.routes import patient_booking  # noqa: PLC0415
+    from app.routes import patient_booking
 
     google = _FakeGoogle(monkeypatch)
 
@@ -2178,13 +2178,13 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
     The send runs over the clinician-armed session after the move commits; the
     practice is found from the patient's own schema.
     """
-    from app.main import app  # noqa: PLC0415
-    from app.services.client_video_link_notice import (  # noqa: PLC0415
+    from app.main import app
+    from app.services.client_video_link_notice import (
         ClientVideoLinkNotifier,
         PracticeFacts,
         get_client_video_link_notifier,
     )
-    from app.services.email_sender import InMemoryEmailSender  # noqa: PLC0415
+    from app.services.email_sender import InMemoryEmailSender
 
     _open_policy(engine)
     _clear_appointments(engine)
@@ -2250,8 +2250,8 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
 
 def _clear_engine_caches() -> None:
     """Drop the cached engines so the next use builds them from current settings."""
-    from app import db  # noqa: PLC0415
-    from app.settings import get_settings  # noqa: PLC0415
+    from app import db
+    from app.settings import get_settings
 
     for cached in (db.get_nested_session_factory, db.get_session_factory):
         cached.cache_clear()
@@ -2294,17 +2294,17 @@ def test_two_video_moves_at_once_both_send_the_link(
     The barrier holds both moves inside their push at once, and the facts
     lookup opens its own session as ``read_practice_facts`` does.
     """
-    import threading  # noqa: PLC0415
+    import threading
 
-    from app.db import create_standalone_session, get_nested_engine  # noqa: PLC0415
-    from app.main import app  # noqa: PLC0415
-    from app.services.client_video_link_notice import (  # noqa: PLC0415
+    from app.db import create_standalone_session, get_nested_engine
+    from app.main import app
+    from app.services.client_video_link_notice import (
         ClientVideoLinkNotifier,
         PracticeFacts,
         get_client_video_link_notifier,
     )
-    from app.services.email_sender import InMemoryEmailSender  # noqa: PLC0415
-    from app.services.google_calendar_service import (  # noqa: PLC0415
+    from app.services.email_sender import InMemoryEmailSender
+    from app.services.google_calendar_service import (
         GoogleCalendarService,
     )
 

@@ -57,13 +57,13 @@ def _seeded_practice(engine: Engine, email: str) -> Iterator[str]:
     user, and the email mapping — so this covers the real lookup rather than a
     stand-in for it.
     """
-    from app.db.platform_models import (  # noqa: PLC0415
+    from app.db.platform_models import (
         EmailTenantMappingRow,
         PlatformUserRow,
         PracticeRow,
     )
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
+    from sqlalchemy.orm import Session as OrmSession
 
     practice_id = str(uuid.uuid4())
     schema = f"practice_{practice_id.replace('-', '_')}"
@@ -104,7 +104,7 @@ def _seeded_practice(engine: Engine, email: str) -> Iterator[str]:
 
 def test_a_mapped_identity_resolves_to_its_practice_schema(engine: Engine) -> None:
     """The happy path, through the real lookup rather than a stand-in."""
-    from app.auth.service import _resolve_practice_from_email  # noqa: PLC0415
+    from app.auth.service import _resolve_practice_from_email
 
     email = f"resolves-{uuid.uuid4().hex[:8]}@example.invalid"
     with _seeded_practice(engine, email) as schema:
@@ -121,7 +121,7 @@ def test_an_unmapped_identity_resolves_to_nothing(engine: Engine) -> None:
     middleware then falls back to the default schema — where the practice
     tables are not — which is why the fallback now reports a reason.
     """
-    from app.auth.service import _resolve_practice_from_email  # noqa: PLC0415
+    from app.auth.service import _resolve_practice_from_email
 
     unmapped = f"unmapped-{uuid.uuid4().hex[:8]}@example.invalid"
 
@@ -134,9 +134,9 @@ def test_the_middleware_reports_why_an_unmapped_identity_is_unresolved() -> None
     Needs no database of its own — the point is that the reason the middleware
     reports for "no mapping" is the same case the query above produces.
     """
-    import types  # noqa: PLC0415
+    import types
 
-    from app.db.middleware import (  # noqa: PLC0415
+    from app.db.middleware import (
         UNRESOLVED_NO_MAPPING,
         _resolve_schema_from_request,
     )

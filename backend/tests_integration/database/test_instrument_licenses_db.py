@@ -77,8 +77,8 @@ def two_practices() -> Iterator[tuple[Engine, str, str]]:
     Two rather than one because the isolation claim here is about the
     schema, and one schema cannot demonstrate a boundary.
     """
-    from app.db.platform_bootstrap import bring_platform_to_head  # noqa: PLC0415
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.platform_bootstrap import bring_platform_to_head
+    from app.db.provisioning import create_practice_schema
 
     scratch = scratch_db.scratch_name("pablo_licenses")
     admin = create_engine(_DB_URL, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
@@ -107,7 +107,7 @@ def fresh_practice(two_practices: tuple[Engine, str, str]) -> tuple[Engine, str]
     recorded nothing" cannot be asked of either once anything has run. This
     one is provisioned per test that needs the claim.
     """
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     engine, _, _ = two_practices
     schema = f"practice_{uuid.uuid4().hex[:12]}"
@@ -124,13 +124,13 @@ def _service_on(engine: Engine, schema: str):
     not be the one that was pointed anywhere. Commit at the end, or open a
     second session for the read.
     """
-    from app.repositories.postgres.instrument_license import (  # noqa: PLC0415
+    from app.repositories.postgres.instrument_license import (
         PostgresInstrumentLicenseRepository,
     )
-    from app.services.instrument_license_service import (  # noqa: PLC0415
+    from app.services.instrument_license_service import (
         InstrumentLicenseService,
     )
-    from sqlalchemy.orm import Session  # noqa: PLC0415
+    from sqlalchemy.orm import Session
 
     session = Session(engine)
     session.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -190,7 +190,7 @@ class TestTheDatabaseEnforcesOnePermissionInForce:
         self, two_practices: tuple[Engine, str, str]
     ) -> None:
         """Two screens, one instant: the index is the only thing that arbitrates."""
-        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError
 
         engine, schema, _ = two_practices
         session, service = _service_on(engine, schema)

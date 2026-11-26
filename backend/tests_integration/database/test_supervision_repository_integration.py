@@ -68,7 +68,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     schema = f"practice_test_supervision_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)

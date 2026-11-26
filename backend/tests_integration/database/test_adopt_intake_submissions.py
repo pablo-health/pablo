@@ -55,7 +55,7 @@ _GAD7 = {str(i): 2 for i in range(1, 8)}
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A freshly provisioned practice, which comes seeded with the form."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -191,7 +191,7 @@ class TestAdoption:
     def test_adopting_maps_the_whole_submission(
         self, engine: Engine, tenant_schema: str, submission: tuple[str, str]
     ) -> None:
-        from app.bin.adopt_intake_submissions import adopt_practice  # noqa: PLC0415
+        from app.bin.adopt_intake_submissions import adopt_practice
 
         patient_id, submission_id = submission
         assert _counts(engine, tenant_schema) == (0, 0, 1), "the control: nothing adopted yet"
@@ -246,7 +246,7 @@ class TestAdoption:
     @pytest.mark.usefixtures("submission")
     def test_running_it_again_changes_nothing(self, engine: Engine, tenant_schema: str) -> None:
         """Idempotent, which is the only way "run this once" is safe."""
-        from app.bin.adopt_intake_submissions import adopt_practice  # noqa: PLC0415
+        from app.bin.adopt_intake_submissions import adopt_practice
 
         before = _counts(engine, tenant_schema)
         result = adopt_practice(engine, tenant_schema)
@@ -262,7 +262,7 @@ class TestAdoption:
     @pytest.mark.usefixtures("submission")
     def test_row_security_is_back_on_afterwards(self, engine: Engine, tenant_schema: str) -> None:
         """The flags the command turned off, put back exactly as they were."""
-        from app.bin.adopt_intake_submissions import adopt_practice  # noqa: PLC0415
+        from app.bin.adopt_intake_submissions import adopt_practice
 
         adopt_practice(engine, tenant_schema)
         for table in _TABLES:
@@ -271,7 +271,7 @@ class TestAdoption:
     @pytest.mark.usefixtures("submission")
     def test_a_dry_run_writes_nothing(self, engine: Engine, tenant_schema: str) -> None:
         """Reports what it would do, so an operator can look before running."""
-        from app.bin.adopt_intake_submissions import adopt_practice  # noqa: PLC0415
+        from app.bin.adopt_intake_submissions import adopt_practice
 
         before = _counts(engine, tenant_schema)
         result = adopt_practice(engine, tenant_schema, dry_run=True)

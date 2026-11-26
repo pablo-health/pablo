@@ -495,8 +495,8 @@ class TestHoldingTheFirstClaimToAPayer:
 
     @pytest.fixture
     def holding(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from app.claims import submit_worker as worker  # noqa: PLC0415
-        from app.settings import get_settings  # noqa: PLC0415
+        from app.claims import submit_worker as worker
+        from app.settings import get_settings
 
         on = get_settings().model_copy(update={"hold_first_claim_to_payer": True})
         monkeypatch.setattr(worker, "get_settings", lambda: on)

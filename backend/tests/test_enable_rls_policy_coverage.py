@@ -163,7 +163,7 @@ def test_a_text_patient_id_is_skipped_rather_than_policied() -> None:
     overload, and the CREATE POLICY takes the whole schema down with it.
     Registered, so the unknown-table rule above is not what catches it.
     """
-    from app.db import register_overlay_patient_scoped  # noqa: PLC0415
+    from app.db import register_overlay_patient_scoped
 
     register_overlay_patient_scoped("other_layer_events")
     try:

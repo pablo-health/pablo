@@ -241,6 +241,7 @@ ignore = [
     "ARG002",   # Allow unused method args (pytest fixtures)
     "PLR0913",  # Allow many arguments (pytest fixture injection)
     "PLR2004",  # Allow magic values in tests (counts, small literals are self-documenting)
+    "PLC0415",  # Tests import app modules inside functions, after the environment is set
 ]
 "backend/evals/**/*.py" = [
     "S101",     # Allow assert in eval harness tests
@@ -252,8 +253,12 @@ ignore = [
 ]
 "backend/tests_integration/**/*.py" = [
     "S101",     # Allow assert in tests
+    "S105",     # Allow hardcoded passwords (test fixtures with token-like attribute names)
     "ARG001",   # Allow unused function args (pytest fixtures)
+    "ARG002",   # Allow unused method args (pytest fixtures)
+    "PLR0913",  # Allow many arguments (pytest fixture injection)
     "PLR2004",  # Allow magic values in tests (counts, small literals are self-documenting)
+    "PLC0415",  # Tests import app modules inside functions, after the environment is set
 ]
 "backend/app/models/**/*.py" = [
     "TC003",    # datetime import needed at runtime for Pydantic/dataclass field validation

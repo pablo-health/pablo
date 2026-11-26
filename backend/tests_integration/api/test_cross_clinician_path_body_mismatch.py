@@ -142,7 +142,7 @@ class _Caller:
 @pytest.fixture(scope="module", autouse=True)
 def _arming_here_stays_here() -> Iterator[None]:
     """Hand back the request ContextVars as this module found them."""
-    from app.db import (  # noqa: PLC0415
+    from app.db import (
         _current_patient_id,
         _current_tenant_schema,
         _current_user_id,
@@ -160,7 +160,7 @@ def _arming_here_stays_here() -> Iterator[None]:
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """A practice provisioned the production way, mapped to ``_TENANT_EMAIL``."""
-    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (
         _seeded_practice,
     )
 
@@ -498,7 +498,7 @@ class _FakeStripe:
 
 
 def _user(user_id: str, name: str) -> User:
-    from app.models import User  # noqa: PLC0415
+    from app.models import User
 
     return User(
         id=user_id,
@@ -518,8 +518,8 @@ def world(
     seed: _Seed,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[_World]:
-    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.auth.service import (  # noqa: PLC0415
+    from app.auth.providers import VerifiedIdentity
+    from app.auth.service import (
         TenantContext,
         get_current_user,
         get_current_user_id,
@@ -528,11 +528,11 @@ def world(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
-    from app.diagnostics.definition_provider import BaselineDefinitionProvider  # noqa: PLC0415
-    from app.diagnostics.router import get_diagnostic_definition_provider  # noqa: PLC0415
-    from app.payments.provider import PaymentCredentials  # noqa: PLC0415
-    from fastapi.testclient import TestClient  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session
+    from app.diagnostics.definition_provider import BaselineDefinitionProvider
+    from app.diagnostics.router import get_diagnostic_definition_provider
+    from app.payments.provider import PaymentCredentials
+    from fastapi.testclient import TestClient
 
     caller = _Caller(user=_user(_AVERY, "Avery"))
 
@@ -746,7 +746,7 @@ def _problem_order(w: _World) -> _Built:
 
 
 def _chart_history_source_note(w: _World) -> _Built:
-    from app.chart_history.fields import HISTORY_KEYS  # noqa: PLC0415
+    from app.chart_history.fields import HISTORY_KEYS
 
     a, b = w.seed.avery, w.seed.blake
     key = HISTORY_KEYS[0]
@@ -1250,7 +1250,7 @@ _NOT_A_CLINICIANS_OBJECT = {
 
 
 def _body_id_fields(model: type[Any], depth: int = 0) -> list[str]:
-    from pydantic import BaseModel  # noqa: PLC0415
+    from pydantic import BaseModel
 
     found: list[str] = []
     for name, info in model.model_fields.items():
@@ -1268,8 +1268,8 @@ def _body_id_fields(model: type[Any], depth: int = 0) -> list[str]:
 
 def test_every_route_of_this_shape_has_a_case(fastapi_app: FastAPI) -> None:
     """A route whose path names an object and whose body names another, by id."""
-    from app.route_introspection import iter_api_routes  # noqa: PLC0415
-    from pydantic import BaseModel  # noqa: PLC0415
+    from app.route_introspection import iter_api_routes
+    from pydantic import BaseModel
 
     swept: set[str] = set()
     for path, route in iter_api_routes(fastapi_app):

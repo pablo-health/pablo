@@ -50,7 +50,7 @@ _CLINICIAN_B = "4d6c3b2e-bc4d-4ef0-9234-b56cd78e9f01"
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -68,12 +68,12 @@ class _TenantSession:
     """A tenant session armed as one clinician, the way a request opens one."""
 
     def __init__(self, engine: Engine, schema: str, user_id: str) -> None:
-        from app.db import (  # noqa: PLC0415
+        from app.db import (
             _current_tenant_schema,
             _current_user_id,
             arm_current_user_id,
         )
-        from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+        from sqlalchemy.orm import Session as OrmSession
 
         self._schema_token = _current_tenant_schema.set(schema)
         self._uid_token = _current_user_id.set(user_id)
@@ -82,7 +82,7 @@ class _TenantSession:
         arm_current_user_id(self.session, user_id)
 
     def close(self) -> None:
-        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id
 
         self.session.close()
         _current_tenant_schema.reset(self._schema_token)
@@ -90,7 +90,7 @@ class _TenantSession:
 
 
 def _signature(user_id: str, **overrides: Any) -> Any:
-    from app.db.platform_models import PayerAuthorizationRow  # noqa: PLC0415
+    from app.db.platform_models import PayerAuthorizationRow
 
     now = datetime.now(UTC)
     fields: dict[str, Any] = {
@@ -142,7 +142,7 @@ def test_a_fresh_tenant_carries_no_copy_of_it(engine: Engine, tenant_schema: str
 
 def test_one_clinician_cannot_read_anothers_signature(engine: Engine, tenant_schema: str) -> None:
     """What authority Pablo holds over a named person is not a colleague's business."""
-    from app.db.platform_models import PayerAuthorizationRow  # noqa: PLC0415
+    from app.db.platform_models import PayerAuthorizationRow
 
     scoped = _TenantSession(engine, tenant_schema, _CLINICIAN_A)
     try:

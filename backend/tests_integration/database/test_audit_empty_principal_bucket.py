@@ -89,7 +89,7 @@ def _clean_principal_contextvars() -> Iterator[None]:
 
 @pytest.fixture
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from app.db.provisioning import create_practice_schema
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -104,7 +104,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
 
 
 def _as_patient(engine: Engine, schema: str, patient_id: str) -> Session:
-    from app.db import arm_current_patient_id  # noqa: PLC0415
+    from app.db import arm_current_patient_id
 
     session = sessionmaker(bind=engine, expire_on_commit=False)()
     session.execute(text(f"SET search_path = {schema}, platform, public"))
@@ -113,7 +113,7 @@ def _as_patient(engine: Engine, schema: str, patient_id: str) -> Session:
 
 
 def _as_clinician(engine: Engine, schema: str, user_id: str) -> Session:
-    from app.db import arm_current_user_id  # noqa: PLC0415
+    from app.db import arm_current_user_id
 
     session = sessionmaker(bind=engine, expire_on_commit=False)()
     session.execute(text(f"SET search_path = {schema}, platform, public"))

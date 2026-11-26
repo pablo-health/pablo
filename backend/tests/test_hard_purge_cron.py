@@ -279,7 +279,7 @@ def test_delete_clinical_rows_reaches_every_table_no_cascade_does() -> None:
     name, each one armed for the purge, and before the patients row. The tables
     that cascade from ``patients`` since ``8c5e65a0e56a`` are left to it.
     ``tests_integration/database/test_hard_purge_rls.py`` proves the rows go."""
-    from app.db import PATIENT_PURGE_TABLES  # noqa: PLC0415
+    from app.db import PATIENT_PURGE_TABLES
 
     mock_conn = MagicMock()
     hard_purge_cron._delete_clinical_rows(mock_conn, "practice", "pt-1")
