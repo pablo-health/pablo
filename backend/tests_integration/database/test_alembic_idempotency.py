@@ -174,6 +174,28 @@ def _meets_criteria_is_nullable(database_url: str) -> bool:
     return row[0] == "YES"
 
 
+_PLATFORM_PAYER_TABLES = (
+    "payer_participations",
+    "payer_participation_events",
+    "contracted_rates",
+    "payer_authorizations",
+)
+
+
+def _missing_platform_payer_tables(database_url: str) -> list[str]:
+    eng = create_engine(database_url)
+    try:
+        with eng.connect() as conn:
+            return [
+                t
+                for t in _PLATFORM_PAYER_TABLES
+                if conn.execute(text("SELECT to_regclass(:n)"), {"n": f"platform.{t}"}).scalar()
+                is None
+            ]
+    finally:
+        eng.dispose()
+
+
 def test_meets_criteria_nullable_round_trip(fresh_db: str) -> None:
     """up/down/up for c4e8d1f6a2b9 (PABLO-6xj.8).
 
@@ -187,6 +209,8 @@ def test_meets_criteria_nullable_round_trip(fresh_db: str) -> None:
 
     _alembic(fresh_db, "downgrade", "b7e2f4a1c9d3")
     assert _meets_criteria_is_nullable(fresh_db) is False
+    # The tenant chain's old payer-table drops must not reach the platform copies.
+    assert _missing_platform_payer_tables(fresh_db) == []
 
     _alembic(fresh_db, "upgrade", "head")
     assert _meets_criteria_is_nullable(fresh_db) is True
