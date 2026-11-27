@@ -11,7 +11,7 @@ Additive only, and idempotent. Downgrade drops the function as its owner;
 the columns it reads here are the claim source's too, so no grant goes.
 
 Revision ID: 935993fc0ba8
-Revises: 8668091951bb
+Revises: d3a7c5e91f24
 Create Date: 2026-11-26
 """
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 __all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
 
 revision: str = "935993fc0ba8"
-down_revision: str | Sequence[str] | None = "8668091951bb"
+down_revision: str | Sequence[str] | None = "d3a7c5e91f24"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
