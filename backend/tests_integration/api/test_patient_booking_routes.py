@@ -607,6 +607,44 @@ def test_auto_mode_books_it_outright(
     assert response.json()["status"] == "confirmed"
 
 
+def test_a_type_with_the_longest_allowed_name_can_be_booked(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """A type name may be 100 characters, and the appointment keeps it whole."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    long_name = ("Initial consultation for couples " * 4)[:100]
+    long_type = str(uuid.uuid4())
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        conn.execute(
+            text(
+                "INSERT INTO appointment_types (id, user_id, name, duration_minutes, "
+                "self_bookable, created_at, updated_at) "
+                "VALUES (CAST(:i AS uuid), CAST(:u AS uuid), :n, 50, true, now(), now())"
+            ),
+            {"i": long_type, "u": _CLINICIAN, "n": long_name},
+        )
+
+    try:
+        response = patient_a_client.post(
+            "/api/patient/booking",
+            json={"start_at": _at(13).isoformat(), "session_type": long_name},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["session_type"] == long_name
+    finally:
+        _clear_appointments(engine)
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+            conn.execute(
+                text("DELETE FROM appointment_types WHERE id = CAST(:i AS uuid)"),
+                {"i": long_type},
+            )
+
+
 def test_a_booking_cannot_land_on_another_patients_appointment(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
