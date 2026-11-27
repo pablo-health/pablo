@@ -36,7 +36,7 @@ from app.db.platform_models import PlatformAuditLogRow, PracticeRow
 from app.models.platform_audit import PlatformAuditAction
 from app.repositories.postgres.platform_audit import PostgresPlatformAuditRepository
 from app.services import pentest_tenant_service
-from app.services.pentest_tenant_service import PentestTenantService
+from app.services.pentest_tenant_service import PentestTenantService, register_practice_remover
 from app.services.platform_audit_service import PlatformAuditService
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
@@ -44,6 +44,7 @@ from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    from fastapi import Request
     from sqlalchemy.engine import Engine
 
 _db_url = os.environ.get("DATABASE_URL", "")
@@ -225,7 +226,38 @@ def test_the_build_lock_is_held_for_the_whole_of_a_slow_build(
         _drop(short_timeout_engine, schema_name)
 
 
-def test_pentest_deprovision_waits_for_a_build_in_flight(short_timeout_engine: Engine) -> None:
+class _RecordingRemover:
+    """A registered remover: drops the schema, marks the row deleted, and
+    records when it ran."""
+
+    def __init__(self) -> None:
+        self.ran_at = 0.0
+
+    def __call__(
+        self, session: Session, practice: PracticeRow, actor_user_id: str, request: Request | None
+    ) -> None:
+        self.ran_at = time.monotonic()
+        session.execute(text(f'DROP SCHEMA IF EXISTS "{practice.schema_name}" CASCADE'))
+        practice.deleted_at = datetime.now(UTC)
+        session.commit()
+
+
+@pytest.fixture(params=["schema drop", "registered remover"])
+def remover(request: pytest.FixtureRequest) -> Iterator[_RecordingRemover | None]:
+    if request.param == "schema drop":
+        yield None
+        return
+    recording = _RecordingRemover()
+    register_practice_remover(recording)
+    try:
+        yield recording
+    finally:
+        register_practice_remover(None)
+
+
+def test_pentest_deprovision_waits_for_a_build_in_flight(
+    short_timeout_engine: Engine, remover: _RecordingRemover | None
+) -> None:
     schema_name = _new_schema_name()
     tenant_id = f"pentest-{uuid.uuid4().hex[:8]}"
     with Session(short_timeout_engine) as session:
@@ -271,7 +303,13 @@ def test_pentest_deprovision_waits_for_a_build_in_flight(short_timeout_engine: E
         assert deprovisioned_at >= slowed.stamped_at, "the drop did not wait for the build"
         assert not _schema_exists(short_timeout_engine, schema_name)
         with Session(short_timeout_engine) as session:
-            assert session.get(PracticeRow, tenant_id) is None
+            row = session.get(PracticeRow, tenant_id)
+            if remover is None:
+                assert row is None
+            else:
+                assert remover.ran_at >= slowed.stamped_at, "the remover did not wait for the build"
+                assert row is not None
+                assert row.deleted_at is not None
     finally:
         _drop(short_timeout_engine, schema_name)
         with Session(short_timeout_engine) as session:
