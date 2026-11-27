@@ -467,3 +467,18 @@ def test_preferences_must_name_days_times_and_a_known_modality(
     assert client.post(base, json={**_PREFS, "days": []}).status_code == 422
     assert client.post(base, json={**_PREFS, "times": ["noon"]}).status_code == 422
     assert client.post(base, json={**_PREFS, "modality": "phone"}).status_code == 422
+
+
+def test_a_session_type_as_long_as_a_type_name_is_accepted(client: TestClient, seed: _Seed) -> None:
+    longest = "w" * 100
+    added = client.post(
+        f"/api/patients/{seed.active[1]}/waitlist", json={**_PREFS, "session_type": longest}
+    )
+    assert added.status_code == 201, added.text
+    assert added.json()["session_type"] == longest
+
+    entry_id = added.json()["id"]
+    renamed = client.patch(f"/api/waitlist/{entry_id}", json={"session_type": "v" * 100})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["session_type"] == "v" * 100
+    assert client.delete(f"/api/waitlist/{entry_id}").status_code == 200

@@ -64,4 +64,4 @@ export type UpdateWaitlistEntryRequest = Partial<
 >
 
 /** Server-side limit on a session type, mirrored for the input. */
-export const WAITLIST_SESSION_TYPE_MAX = 30
+export const WAITLIST_SESSION_TYPE_MAX = 100
