@@ -639,6 +639,10 @@ def test_a_type_with_the_longest_allowed_name_can_be_booked(
         _clear_appointments(engine)
         with engine.begin() as conn:
             conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+            # Armed, or row-level security lets the DELETE match nothing.
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN}
+            )
             conn.execute(
                 text("DELETE FROM appointment_types WHERE id = CAST(:i AS uuid)"),
                 {"i": long_type},
