@@ -236,7 +236,7 @@ class TherapySessionRow(Base):
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
-    session_type: Mapped[str | None] = mapped_column(String(30))
+    session_type: Mapped[str | None] = mapped_column(String(100))
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
     source: Mapped[str | None] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -2633,7 +2633,7 @@ class AppointmentRow(Base):
     #: clinician can rename a type, and a past appointment should still read
     #: as what it was called at the time — the id says which type it is now,
     #: this says what it was called then.
-    session_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    session_type: Mapped[str] = mapped_column(String(100), nullable=False)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
     # --- Telehealth ------------------------------------------------------
@@ -2779,7 +2779,7 @@ class WaitlistEntryRow(Base):
     days: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     times: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     modality: Mapped[str] = mapped_column(String(16), nullable=False)
-    session_type: Mapped[str | None] = mapped_column(String(30))
+    session_type: Mapped[str | None] = mapped_column(String(100))
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     paused: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
