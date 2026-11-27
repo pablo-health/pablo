@@ -471,9 +471,11 @@ def test_preferences_must_name_days_times_and_a_known_modality(
 
 def test_a_session_type_as_long_as_a_type_name_is_accepted(client: TestClient, seed: _Seed) -> None:
     longest = "w" * 100
-    added = client.post(
-        f"/api/patients/{seed.active[1]}/waitlist", json={**_PREFS, "session_type": longest}
-    )
+    base = f"/api/patients/{seed.active[1]}/waitlist"
+    # Earlier tests in the module may leave this client on the list.
+    if (open_entry := client.get(base).json()["entry"]) is not None:
+        assert client.delete(f"/api/waitlist/{open_entry['id']}").status_code == 200
+    added = client.post(base, json={**_PREFS, "session_type": longest})
     assert added.status_code == 201, added.text
     assert added.json()["session_type"] == longest
 
