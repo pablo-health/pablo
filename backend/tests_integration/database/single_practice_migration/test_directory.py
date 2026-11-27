@@ -76,5 +76,6 @@ def test_the_practice_directory_reaches_the_renamed_schema(old_shape: Engine) ->
     assert [tuple(row) for row in functions] == [
         ("practice_claim_source", "pablo_practice_directory", path),
         ("practice_client_directory", "pablo_practice_directory", path),
+        ("practice_enrollment_status", "pablo_practice_directory", path),
         ("practice_outside_appointment", "pablo_practice_directory", path),
     ]

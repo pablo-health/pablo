@@ -180,6 +180,7 @@ def harness() -> dict[str, Any]:
     receipts = InMemoryClaimReceiptRepository()
     audit_repo = InMemoryAuditRepository()
     billing_profile = dict(_BILLING_PROFILE)
+    enrollment: dict[str, str | None] = {"status": None}
 
     app = FastAPI()
     register_exception_handlers(app)
@@ -196,6 +197,9 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[get_claim_repository] = lambda: claims
     app.dependency_overrides[get_claim_receipt_repository] = lambda: receipts
     app.dependency_overrides[claims_routes.get_billing_profile_loader] = lambda: billing_profile
+    app.dependency_overrides[claims_routes.get_enrollment_lookup] = lambda: (
+        lambda _claim: enrollment["status"]
+    )
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
     client = TestClient(app, raise_server_exceptions=False)
     return {
@@ -207,6 +211,7 @@ def harness() -> dict[str, Any]:
         "claims": claims,
         "audit": audit_repo,
         "billing_profile": billing_profile,
+        "enrollment": enrollment,
     }
 
 
@@ -368,6 +373,26 @@ class TestRead:
         assert body["deadlines"]["filing"] is not None
         assert isinstance(body["deadlines"]["days_left"], int)
 
+    def test_detail_warns_when_the_clinician_is_not_in_network(
+        self, harness: dict[str, Any]
+    ) -> None:
+        built = _build(harness)
+        harness["enrollment"]["status"] = "credentialed"
+        body = harness["client"].get(f"/api/claims/{built['id']}").json()
+        assert [(f["severity"], f["code"]) for f in body["findings"]] == [
+            ("warning", "rendering_not_in_network")
+        ]
+
+    def test_detail_of_a_sent_claim_does_not_say_check_before_sending(
+        self, harness: dict[str, Any]
+    ) -> None:
+        parent = _validated(harness)
+        stored = harness["claims"].get(parent["id"])
+        harness["claims"].update(stored.model_copy(update={"state": "denied"}))
+        harness["enrollment"]["status"] = "credentialed"
+        body = harness["client"].get(f"/api/claims/{parent['id']}").json()
+        assert "rendering_not_in_network" not in [f["code"] for f in body["findings"]]
+
     def test_detail_reports_the_current_findings_of_a_blocked_draft(
         self, harness: dict[str, Any]
     ) -> None:
@@ -494,6 +519,15 @@ class TestValidate:
         assert resp.status_code == 200, resp.text
         assert [f["code"] for f in resp.json()["findings"]] == ["telehealth_modifier_missing"]
         assert resp.json()["claim"]["state"] == "validated"
+
+    def test_validate_warns_when_the_clinician_is_not_in_network(
+        self, harness: dict[str, Any]
+    ) -> None:
+        built = _build(harness)
+        harness["enrollment"]["status"] = "credentialed"
+        resp = harness["client"].post(f"/api/claims/{built['id']}/validate")
+        assert resp.status_code == 200, resp.text
+        assert [f["code"] for f in resp.json()["findings"]] == ["rendering_not_in_network"]
 
     def test_blocking_finding_is_422_and_the_claim_stays_a_draft(
         self, harness: dict[str, Any]

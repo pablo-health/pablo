@@ -59,6 +59,7 @@ class TestTheTemplateCarriesTheAccess:
             assert provisioned["functions"] == [
                 ("practice_claim_source", _ROLE, path),
                 ("practice_client_directory", _ROLE, path),
+                ("practice_enrollment_status", _ROLE, path),
                 ("practice_outside_appointment", _ROLE, path),
             ]
             assert provisioned["columns"] == sorted(

@@ -9,6 +9,7 @@ DIRECTORY_ROLE = "pablo_practice_directory"
 DIRECTORY_FUNCTION = "practice_client_directory"
 OUTSIDE_APPOINTMENT_FUNCTION = "practice_outside_appointment"
 CLAIM_SOURCE_FUNCTION = "practice_claim_source"
+ENROLLMENT_FUNCTION = "practice_enrollment_status"
 #: Where an operator finds how to create the role by hand.
 DIRECTORY_ROLE_DOC = "docs/SELF_HOSTING_HIPAA_GUIDE.md#database-roles"
 
@@ -88,6 +89,9 @@ CLAIM_COVERAGE_COLUMNS = (
     "created_at",
 )
 CLAIM_APPOINTMENT_TYPE_COLUMNS = ("id", "user_id", "default_fee_cents")
+#: What the enrollment lookup reads from the platform table. Its grant and
+#: policy are on the platform chain, not here: the table is not per practice.
+ENROLLMENT_COLUMNS = ("user_id", "practice_id", "payer_id", "status")
 CLAIM_CLINICIAN_COLUMNS = ("user_id", "npi_number", "taxonomy_code")
 
 #: The read policy on each table a directory function reads, for the role alone.
@@ -234,6 +238,34 @@ _CLAIM_SOURCE_SQL = """
 """
 
 
+# Where the clinician who held one visit stands with one payer. A row with a
+# NULL status is a clinician with no participation row; no row is no visit.
+# The practice is the schema of this function's own appointments table, so
+# the filter survives the template capture, which rewrites only qualifiers.
+_ENROLLMENT_SQL = """
+    CREATE OR REPLACE FUNCTION __SCHEMA__.practice_enrollment_status(
+        p_appointment_id uuid, p_payer_id uuid
+    )
+    RETURNS TABLE (status character varying)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp
+    AS $$
+        SELECT pp.status
+        FROM __SCHEMA__.appointments a
+        LEFT JOIN platform.payer_participations pp
+          ON pp.user_id = a.user_id
+         AND pp.payer_id = p_payer_id
+         AND pp.practice_id = (
+             SELECT c.relnamespace::pg_catalog.regnamespace::text
+             FROM pg_catalog.pg_class c
+             WHERE c.oid = '__SCHEMA__.appointments'::pg_catalog.regclass
+         )
+        WHERE a.id = p_appointment_id
+          AND coalesce(current_setting('app.current_user_id', true), '') <> ''
+    $$
+"""
+
+
 class _Definer(NamedTuple):
     """One function the directory role owns, and what it reads."""
 
@@ -271,4 +303,10 @@ _CLAIM_SOURCE = _Definer(
         ("clinician_profiles", CLAIM_CLINICIAN_COLUMNS),
     ),
 )
-_DEFINERS = (_DIRECTORY, _OUTSIDE_APPOINTMENT, _CLAIM_SOURCE)
+_ENROLLMENT = _Definer(
+    ENROLLMENT_FUNCTION,
+    "(uuid, uuid)",
+    _ENROLLMENT_SQL,
+    (("appointments", ("id", "user_id")),),
+)
+_DEFINERS = (_DIRECTORY, _OUTSIDE_APPOINTMENT, _CLAIM_SOURCE, _ENROLLMENT)

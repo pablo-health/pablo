@@ -11,6 +11,7 @@ from .practice_directory_definitions import (
     _CLAIM_SOURCE,
     _DEFINERS,
     _DIRECTORY,
+    _ENROLLMENT,
     _OUTSIDE_APPOINTMENT,
     _SCHEMA,
     DIRECTORY_FUNCTION,
@@ -81,6 +82,11 @@ def create_claim_source_function(db: Session | Connection, schema: str) -> None:
     _create(db, schema, _CLAIM_SOURCE)
 
 
+def create_enrollment_function(db: Session | Connection, schema: str) -> None:
+    """Create this schema's enrollment lookup; the same rules as the directory's."""
+    _create(db, schema, _ENROLLMENT)
+
+
 def _create(db: Session | Connection, schema: str, definer: _Definer) -> None:
     if directory_function_owner(db, schema, definer.name) == DIRECTORY_ROLE:
         return
@@ -100,6 +106,11 @@ def drop_outside_appointment_function(db: Session | Connection, schema: str) -> 
 def drop_claim_source_function(db: Session | Connection, schema: str) -> None:
     """Drop this schema's claim source, as its owner when that is the role."""
     _drop(db, schema, _CLAIM_SOURCE)
+
+
+def drop_enrollment_function(db: Session | Connection, schema: str) -> None:
+    """Drop this schema's enrollment lookup, as its owner when that is the role."""
+    _drop(db, schema, _ENROLLMENT)
 
 
 def _drop(db: Session | Connection, schema: str, definer: _Definer) -> None:

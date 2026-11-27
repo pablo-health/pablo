@@ -7,6 +7,8 @@ role adds itself there, so a caller never checks "is owner" itself.
 :func:`read_claim_source` is the claim fields of any session in the practice,
 read past the row policies through ``practice_claim_source``
 (``app.db.practice_directory``); it refuses anyone :func:`can_bill` refuses.
+:func:`read_enrollment_status` is the same for where the visit's clinician
+stands with the claim's payer, and also answers that clinician.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 
 from . import repositories
-from .db.practice_directory import CLAIM_SOURCE_FUNCTION
+from .credentialing.participation import DEFAULT_STATUS
+from .db.practice_directory import CLAIM_SOURCE_FUNCTION, ENROLLMENT_FUNCTION
 from .db.practice_owner import is_recorded_owner
 
 if TYPE_CHECKING:
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
 
     from .db.platform_models import PracticeRow
     from .models import User
+    from .models.claims import Claim
 
 
 def can_bill(practice: PracticeRow, user: User) -> bool:
@@ -129,3 +133,30 @@ def read_claim_source(
         for f in fields(ClaimSource)
     }
     return ClaimSource(**values)
+
+
+def read_enrollment_status(
+    db: Session, practice: PracticeRow, user: User, claim: Claim
+) -> str | None:
+    """The visit's clinician's participation status with ``claim``'s payer, or ``None``.
+
+    ``None`` when the claim names no visit, the visit is gone, or ``user`` is
+    neither the claim's clinician nor someone who may bill. No row is
+    out-of-network, as in ``participation.status_for``.
+    """
+    visit = next((line.appointment_id for line in claim.lines if line.appointment_id), None)
+    if visit is None:
+        return None
+    if user.id != claim.owner_user_id and not can_bill(practice, user):
+        return None
+    try:
+        ids = {"appointment": uuid.UUID(visit), "payer": uuid.UUID(claim.payer_id)}
+    except ValueError:
+        return None
+    statement = text(
+        f"SELECT status FROM {ENROLLMENT_FUNCTION}(:appointment, :payer)"  # noqa: S608 — a constant
+    )
+    row = db.execute(statement, ids).first()
+    if row is None:
+        return None
+    return str(row.status) if row.status is not None else DEFAULT_STATUS
