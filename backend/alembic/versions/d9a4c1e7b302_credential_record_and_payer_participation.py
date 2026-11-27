@@ -393,15 +393,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("payer_participation_events")
-    op.drop_table("payer_participations")
-    op.drop_table("credential_bank_accounts")
-    op.drop_table("credential_service_locations")
-    op.drop_table("credential_disclosures")
-    op.drop_table("credential_references")
-    op.drop_table("credential_employment")
-    op.drop_table("credential_training")
-    op.drop_table("credential_education")
-    op.drop_table("credential_liability_policies")
-    op.drop_table("credential_licenses")
-    op.drop_table("credential_government_ids")
+    # All of these now live in ``platform``; an unqualified drop would take those.
+    from app.db.practice_table_drop import drop_practice_table_sql  # noqa: PLC0415
+
+    for table in (
+        "payer_participation_events",
+        "payer_participations",
+        "credential_bank_accounts",
+        "credential_service_locations",
+        "credential_disclosures",
+        "credential_references",
+        "credential_employment",
+        "credential_training",
+        "credential_education",
+        "credential_liability_policies",
+        "credential_licenses",
+        "credential_government_ids",
+    ):
+        op.execute(drop_practice_table_sql(table))

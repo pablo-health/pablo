@@ -67,36 +67,13 @@ _TABLES = (
     "payer_authorizations",
 )
 
-#: Drop the table from THIS schema and no other. ``current_schema()`` is the
-#: first entry of the search path, which the tenant env sets to the practice
-#: being migrated. The ``platform`` guard makes the mistake unrepresentable
-#: rather than merely unlikely.
-_DROP = """
-DO $$
-DECLARE
-    schema_name text := current_schema();
-BEGIN
-    IF schema_name IS NULL OR schema_name = 'platform' THEN
-        RAISE NOTICE 'refusing to drop <table> outside a practice schema (%)', schema_name;
-        RETURN;
-    END IF;
-    IF EXISTS (
-        SELECT 1 FROM information_schema.tables
-        WHERE table_schema = schema_name AND table_name = '<table>'
-    ) THEN
-        EXECUTE format('DROP TABLE %I.<table>', schema_name);
-    END IF;
-END
-$$
-"""
-
 
 def upgrade() -> None:
     """Remove the four from this practice schema, and nowhere else."""
+    from app.db.practice_table_drop import drop_practice_table_sql  # noqa: PLC0415
+
     for table in _TABLES:
-        # ``replace`` on a constant rather than an f-string: the name comes from
-        # the tuple above and never from a caller.
-        op.execute(_DROP.replace("<table>", table))
+        op.execute(drop_practice_table_sql(table))
 
 
 def downgrade() -> None:

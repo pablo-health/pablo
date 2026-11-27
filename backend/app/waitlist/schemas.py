@@ -17,7 +17,7 @@ DayPart = Literal["morning", "afternoon", "evening"]
 Modality = Literal["in_person", "telehealth", "either"]
 VisitModality = Literal["in_person", "telehealth"]
 
-MAX_SESSION_TYPE = 30
+MAX_SESSION_TYPE = 100
 
 
 class AddWaitlistEntryRequest(BaseModel):

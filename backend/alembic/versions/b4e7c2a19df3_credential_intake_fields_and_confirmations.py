@@ -108,13 +108,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("credential_confirmations")
+    # These tables now live in ``platform``; unqualified ops would change those.
+    from app.db.practice_table_drop import (  # noqa: PLC0415
+        drop_practice_table_sql,
+        practice_schema_with,
+    )
+
+    op.execute(drop_practice_table_sql("credential_confirmations"))
+    schema = practice_schema_with(op.get_bind(), "credential_government_ids")
+    if schema is None:
+        return
     op.drop_constraint(
         "ck_credential_government_ids_supervision_status",
         "credential_government_ids",
         type_="check",
+        schema=schema,
     )
-    op.drop_column("credential_government_ids", "medicaid_intent")
-    op.drop_column("credential_government_ids", "medicare_intent")
-    op.drop_column("credential_government_ids", "caqh_id")
-    op.drop_column("credential_government_ids", "supervision_status")
+    for column in ("medicaid_intent", "medicare_intent", "caqh_id", "supervision_status"):
+        op.drop_column("credential_government_ids", column, schema=schema)
